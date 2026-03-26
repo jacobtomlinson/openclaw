@@ -501,6 +501,68 @@ describe("BlueBubbles webhook monitor", () => {
       );
     });
 
+    it("keeps real-ip fallback clients behind trusted proxies in separate auth buckets", async () => {
+      setupWebhookTarget({
+        account: createMockAccount({
+          password: "99999999",
+        }),
+        config: {
+          gateway: {
+            trustedProxies: ["10.0.0.0/8"],
+            allowRealIpFallback: true,
+          },
+        } as OpenClawConfig,
+      });
+
+      let saw429 = false;
+      for (let i = 0; i < 130; i += 1) {
+        const candidate = String(i).padStart(8, "0");
+        const { res } = await dispatchWebhookPayloadForTest(
+          createPasswordQueryRequestParamsForTest({
+            password: candidate,
+            body: createTimestampedNewMessagePayloadForTest({
+              guid: `real-ip-msg-${i}`,
+              text: `hello real ip ${i}`,
+            }),
+            remoteAddress: "10.0.0.5",
+            overrides: {
+              headers: {
+                host: "localhost",
+                "x-real-ip": "203.0.113.10",
+              },
+            },
+          }),
+        );
+
+        if (res.statusCode === 429) {
+          saw429 = true;
+          break;
+        }
+
+        expect(res.statusCode).toBe(401);
+      }
+
+      expect(saw429).toBe(true);
+
+      await expectWebhookRequestStatusForTest(
+        createPasswordQueryRequestParamsForTest({
+          password: "wrong-pass",
+          body: createTimestampedNewMessagePayloadForTest({
+            guid: "real-ip-msg-other-client",
+            text: "hello other real ip client",
+          }),
+          remoteAddress: "10.0.0.5",
+          overrides: {
+            headers: {
+              host: "localhost",
+              "x-real-ip": "203.0.113.11",
+            },
+          },
+        }),
+        401,
+      );
+    });
+
     it("rejects ambiguous routing when multiple targets match the same password", async () => {
       const targetA = createProtectedWebhookTarget();
       const targetB = createProtectedWebhookTarget();

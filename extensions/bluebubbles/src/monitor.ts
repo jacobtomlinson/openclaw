@@ -143,13 +143,25 @@ function collectTrustedProxies(targets: readonly WebhookTarget[]): string[] {
   return [...proxies];
 }
 
-function resolveWebhookClientIp(req: IncomingMessage, trustedProxies: readonly string[]): string {
-  if (!req.headers["x-forwarded-for"]) {
+function resolveWebhookAllowRealIpFallback(targets: readonly WebhookTarget[]): boolean {
+  return targets.some((target) => target.config.gateway?.allowRealIpFallback === true);
+}
+
+function resolveWebhookClientIp(
+  req: IncomingMessage,
+  trustedProxies: readonly string[],
+  allowRealIpFallback: boolean,
+): string {
+  if (!req.headers["x-forwarded-for"] && !(allowRealIpFallback && req.headers["x-real-ip"])) {
     return req.socket.remoteAddress ?? "unknown";
   }
 
   // Mirror gateway client-IP trust rules so limiter buckets follow configured proxy hops.
-  return resolveRequestClientIp(req, [...trustedProxies]) ?? req.socket.remoteAddress ?? "unknown";
+  return (
+    resolveRequestClientIp(req, [...trustedProxies], allowRealIpFallback) ??
+    req.socket.remoteAddress ??
+    "unknown"
+  );
 }
 
 export async function handleBlueBubblesWebhookRequest(
@@ -160,7 +172,8 @@ export async function handleBlueBubblesWebhookRequest(
   const normalizedPath = normalizeWebhookPath(requestUrl.pathname);
   const pathTargets = webhookTargets.get(normalizedPath) ?? [];
   const trustedProxies = collectTrustedProxies(pathTargets);
-  const clientIp = resolveWebhookClientIp(req, trustedProxies);
+  const allowRealIpFallback = resolveWebhookAllowRealIpFallback(pathTargets);
+  const clientIp = resolveWebhookClientIp(req, trustedProxies, allowRealIpFallback);
   const rateLimitKey = `${normalizedPath}:${clientIp}`;
   return await withResolvedWebhookRequestPipeline({
     req,
