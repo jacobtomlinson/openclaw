@@ -16,8 +16,10 @@ import type { SynologyWebhookPayload, ResolvedSynologyChatAccount } from "./type
 
 // One rate limiter per account, created lazily
 const rateLimiters = new Map<string, RateLimiter>();
+const preAuthRateLimiters = new Map<string, RateLimiter>();
 const PREAUTH_MAX_BODY_BYTES = 64 * 1024;
 const PREAUTH_BODY_TIMEOUT_MS = 5_000;
+const PREAUTH_MAX_REQUESTS_PER_MINUTE = 10;
 
 function getRateLimiter(account: ResolvedSynologyChatAccount): RateLimiter {
   let rl = rateLimiters.get(account.accountId);
@@ -29,15 +31,34 @@ function getRateLimiter(account: ResolvedSynologyChatAccount): RateLimiter {
   return rl;
 }
 
+function getPreAuthRateLimiter(account: ResolvedSynologyChatAccount): RateLimiter {
+  const limit = Math.min(account.rateLimitPerMinute, PREAUTH_MAX_REQUESTS_PER_MINUTE);
+  let rl = preAuthRateLimiters.get(account.accountId);
+  if (!rl || rl.maxRequests() !== limit) {
+    rl?.clear();
+    rl = new RateLimiter(limit);
+    preAuthRateLimiters.set(account.accountId, rl);
+  }
+  return rl;
+}
+
 export function clearSynologyWebhookRateLimiterStateForTest(): void {
   for (const limiter of rateLimiters.values()) {
     limiter.clear();
   }
   rateLimiters.clear();
+  for (const limiter of preAuthRateLimiters.values()) {
+    limiter.clear();
+  }
+  preAuthRateLimiters.clear();
 }
 
 export function getSynologyWebhookRateLimiterCountForTest(): number {
-  return rateLimiters.size;
+  return rateLimiters.size + preAuthRateLimiters.size;
+}
+
+function getSynologyWebhookPreAuthRateLimitKey(req: IncomingMessage): string {
+  return req.socket?.remoteAddress ?? "unknown";
 }
 
 /** Read the full request body as a string. */
@@ -281,9 +302,16 @@ function authorizeSynologyWebhook(params: {
   req: IncomingMessage;
   account: ResolvedSynologyChatAccount;
   payload: SynologyWebhookPayload;
+  preAuthRateLimiter: RateLimiter;
   rateLimiter: RateLimiter;
   log?: WebhookHandlerDeps["log"];
 }): SynologyWebhookAuthorization {
+  const preAuthRateLimitKey = getSynologyWebhookPreAuthRateLimitKey(params.req);
+  if (!params.preAuthRateLimiter.check(preAuthRateLimitKey)) {
+    params.log?.warn(`Rate limit exceeded for remote IP: ${preAuthRateLimitKey}`);
+    return { ok: false, statusCode: 429, error: "Rate limit exceeded" };
+  }
+
   if (!validateToken(params.payload.token, params.account.token)) {
     params.log?.warn(`Invalid token from ${params.req.socket?.remoteAddress}`);
     return { ok: false, statusCode: 401, error: "Invalid token" };
@@ -313,6 +341,7 @@ function authorizeSynologyWebhook(params: {
   }
 
   if (!params.rateLimiter.check(params.payload.user_id)) {
+    // Keep a separate post-auth budget so authenticated users are still throttled per sender.
     params.log?.warn(`Rate limit exceeded for user: ${params.payload.user_id}`);
     return { ok: false, statusCode: 429, error: "Rate limit exceeded" };
   }
@@ -332,6 +361,7 @@ async function parseAndAuthorizeSynologyWebhook(params: {
   req: IncomingMessage;
   res: ServerResponse;
   account: ResolvedSynologyChatAccount;
+  preAuthRateLimiter: RateLimiter;
   rateLimiter: RateLimiter;
   log?: WebhookHandlerDeps["log"];
 }): Promise<{ ok: false } | { ok: true; message: AuthorizedSynologyWebhook }> {
@@ -344,6 +374,7 @@ async function parseAndAuthorizeSynologyWebhook(params: {
     req: params.req,
     account: params.account,
     payload: parsed.payload,
+    preAuthRateLimiter: params.preAuthRateLimiter,
     rateLimiter: params.rateLimiter,
     log: params.log,
   });
@@ -453,6 +484,7 @@ async function processAuthorizedSynologyWebhook(params: {
 export function createWebhookHandler(deps: WebhookHandlerDeps) {
   const { account, deliver, log } = deps;
   const rateLimiter = getRateLimiter(account);
+  const preAuthRateLimiter = getPreAuthRateLimiter(account);
 
   return async (req: IncomingMessage, res: ServerResponse) => {
     // Only accept POST
@@ -464,6 +496,7 @@ export function createWebhookHandler(deps: WebhookHandlerDeps) {
       req,
       res,
       account,
+      preAuthRateLimiter,
       rateLimiter,
       log,
     });
