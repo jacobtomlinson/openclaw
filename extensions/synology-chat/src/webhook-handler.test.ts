@@ -193,6 +193,20 @@ describe("createWebhookHandler", () => {
 
     expect(saw429).toBe(true);
     expect(guessedToken).toBeNull();
+    const lockedReq = makeReq(
+      "POST",
+      makeFormBody({
+        token: weakToken,
+        user_id: "123",
+        username: "testuser",
+        text: "Hello bot",
+      }),
+    );
+    (lockedReq.socket as { remoteAddress?: string }).remoteAddress = "203.0.113.10";
+    const lockedRes = makeRes();
+    await handler(lockedReq, lockedRes);
+
+    expect(lockedRes._status).toBe(429);
     expect(deliver).not.toHaveBeenCalled();
   });
 
