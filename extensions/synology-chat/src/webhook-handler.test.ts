@@ -230,6 +230,28 @@ describe("createWebhookHandler", () => {
     expect(deliver).toHaveBeenCalledTimes(1);
   });
 
+  it("does not spend invalid-token budget on successful requests", async () => {
+    const deliver = vi.fn().mockResolvedValue(null);
+    const handler = createWebhookHandler({
+      account: makeAccount({
+        accountId: "invalid-token-budget-" + Date.now(),
+        rateLimitPerMinute: 30,
+      }),
+      deliver,
+      log,
+    });
+
+    for (let i = 0; i < 11; i += 1) {
+      const req = makeReq("POST", validBody);
+      (req.socket as { remoteAddress?: string }).remoteAddress = "203.0.113.20";
+      const res = makeRes();
+      await handler(req, res);
+      expect(res._status).toBe(204);
+    }
+
+    expect(deliver).toHaveBeenCalledTimes(11);
+  });
+
   it("accepts application/json with alias fields", async () => {
     const deliver = vi.fn().mockResolvedValue(null);
     const handler = createWebhookHandler({

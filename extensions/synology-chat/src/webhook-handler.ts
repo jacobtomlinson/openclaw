@@ -16,7 +16,7 @@ import type { SynologyWebhookPayload, ResolvedSynologyChatAccount } from "./type
 
 // One rate limiter per account, created lazily
 const rateLimiters = new Map<string, RateLimiter>();
-const preAuthRateLimiters = new Map<string, RateLimiter>();
+const invalidTokenRateLimiters = new Map<string, RateLimiter>();
 const PREAUTH_MAX_BODY_BYTES = 64 * 1024;
 const PREAUTH_BODY_TIMEOUT_MS = 5_000;
 const PREAUTH_MAX_REQUESTS_PER_MINUTE = 10;
@@ -31,13 +31,13 @@ function getRateLimiter(account: ResolvedSynologyChatAccount): RateLimiter {
   return rl;
 }
 
-function getPreAuthRateLimiter(account: ResolvedSynologyChatAccount): RateLimiter {
+function getInvalidTokenRateLimiter(account: ResolvedSynologyChatAccount): RateLimiter {
   const limit = Math.min(account.rateLimitPerMinute, PREAUTH_MAX_REQUESTS_PER_MINUTE);
-  let rl = preAuthRateLimiters.get(account.accountId);
+  let rl = invalidTokenRateLimiters.get(account.accountId);
   if (!rl || rl.maxRequests() !== limit) {
     rl?.clear();
     rl = new RateLimiter(limit);
-    preAuthRateLimiters.set(account.accountId, rl);
+    invalidTokenRateLimiters.set(account.accountId, rl);
   }
   return rl;
 }
@@ -47,17 +47,17 @@ export function clearSynologyWebhookRateLimiterStateForTest(): void {
     limiter.clear();
   }
   rateLimiters.clear();
-  for (const limiter of preAuthRateLimiters.values()) {
+  for (const limiter of invalidTokenRateLimiters.values()) {
     limiter.clear();
   }
-  preAuthRateLimiters.clear();
+  invalidTokenRateLimiters.clear();
 }
 
 export function getSynologyWebhookRateLimiterCountForTest(): number {
-  return rateLimiters.size + preAuthRateLimiters.size;
+  return rateLimiters.size + invalidTokenRateLimiters.size;
 }
 
-function getSynologyWebhookPreAuthRateLimitKey(req: IncomingMessage): string {
+function getSynologyWebhookInvalidTokenRateLimitKey(req: IncomingMessage): string {
   return req.socket?.remoteAddress ?? "unknown";
 }
 
@@ -302,17 +302,16 @@ function authorizeSynologyWebhook(params: {
   req: IncomingMessage;
   account: ResolvedSynologyChatAccount;
   payload: SynologyWebhookPayload;
-  preAuthRateLimiter: RateLimiter;
+  invalidTokenRateLimiter: RateLimiter;
   rateLimiter: RateLimiter;
   log?: WebhookHandlerDeps["log"];
 }): SynologyWebhookAuthorization {
-  const preAuthRateLimitKey = getSynologyWebhookPreAuthRateLimitKey(params.req);
-  if (!params.preAuthRateLimiter.check(preAuthRateLimitKey)) {
-    params.log?.warn(`Rate limit exceeded for remote IP: ${preAuthRateLimitKey}`);
-    return { ok: false, statusCode: 429, error: "Rate limit exceeded" };
-  }
-
   if (!validateToken(params.payload.token, params.account.token)) {
+    const invalidTokenRateLimitKey = getSynologyWebhookInvalidTokenRateLimitKey(params.req);
+    if (!params.invalidTokenRateLimiter.check(invalidTokenRateLimitKey)) {
+      params.log?.warn(`Rate limit exceeded for remote IP: ${invalidTokenRateLimitKey}`);
+      return { ok: false, statusCode: 429, error: "Rate limit exceeded" };
+    }
     params.log?.warn(`Invalid token from ${params.req.socket?.remoteAddress}`);
     return { ok: false, statusCode: 401, error: "Invalid token" };
   }
@@ -361,7 +360,7 @@ async function parseAndAuthorizeSynologyWebhook(params: {
   req: IncomingMessage;
   res: ServerResponse;
   account: ResolvedSynologyChatAccount;
-  preAuthRateLimiter: RateLimiter;
+  invalidTokenRateLimiter: RateLimiter;
   rateLimiter: RateLimiter;
   log?: WebhookHandlerDeps["log"];
 }): Promise<{ ok: false } | { ok: true; message: AuthorizedSynologyWebhook }> {
@@ -374,7 +373,7 @@ async function parseAndAuthorizeSynologyWebhook(params: {
     req: params.req,
     account: params.account,
     payload: parsed.payload,
-    preAuthRateLimiter: params.preAuthRateLimiter,
+    invalidTokenRateLimiter: params.invalidTokenRateLimiter,
     rateLimiter: params.rateLimiter,
     log: params.log,
   });
@@ -484,7 +483,7 @@ async function processAuthorizedSynologyWebhook(params: {
 export function createWebhookHandler(deps: WebhookHandlerDeps) {
   const { account, deliver, log } = deps;
   const rateLimiter = getRateLimiter(account);
-  const preAuthRateLimiter = getPreAuthRateLimiter(account);
+  const invalidTokenRateLimiter = getInvalidTokenRateLimiter(account);
 
   return async (req: IncomingMessage, res: ServerResponse) => {
     // Only accept POST
@@ -496,7 +495,7 @@ export function createWebhookHandler(deps: WebhookHandlerDeps) {
       req,
       res,
       account,
-      preAuthRateLimiter,
+      invalidTokenRateLimiter,
       rateLimiter,
       log,
     });
