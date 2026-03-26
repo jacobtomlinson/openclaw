@@ -71,17 +71,36 @@ type GoogleChatGroupEntry = {
 
 function resolveGroupConfig(params: {
   groupId: string;
+  groupName?: string | null;
   groups?: Record<string, GoogleChatGroupEntry>;
 }) {
-  const { groupId, groups } = params;
+  const { groupId, groupName, groups } = params;
   const entries = groups ?? {};
   const keys = Object.keys(entries);
   if (keys.length === 0) {
-    return { entry: undefined, allowlistConfigured: false };
+    return { entry: undefined, allowlistConfigured: false, deprecatedNameMatch: false };
   }
   const entry = entries[groupId];
+  const normalizedGroupName = groupName?.trim().toLowerCase() ?? "";
+  const deprecatedNameMatch =
+    !entry &&
+    Boolean(
+      groupName &&
+      keys.some((key) => {
+        const trimmed = key.trim();
+        if (!trimmed || trimmed === "*" || /^spaces\//i.test(trimmed)) {
+          return false;
+        }
+        return trimmed === groupName || trimmed.toLowerCase() === normalizedGroupName;
+      }),
+    );
   const fallback = entries["*"];
-  return { entry: entry ?? fallback, allowlistConfigured: true, fallback };
+  return {
+    entry: deprecatedNameMatch ? undefined : (entry ?? fallback),
+    allowlistConfigured: true,
+    fallback,
+    deprecatedNameMatch,
+  };
 }
 
 function extractMentionInfo(annotations: GoogleChatAnnotation[], botUser?: string | null) {
@@ -206,6 +225,7 @@ export async function applyGoogleChatInboundAccessPolicy(params: {
   warnMutableGroupKeysConfigured(logVerbose, account.config.groups ?? undefined);
   const groupConfigResolved = resolveGroupConfig({
     groupId: spaceId,
+    groupName: space.displayName ?? null,
     groups: account.config.groups ?? undefined,
   });
   const groupEntry = groupConfigResolved.entry;
@@ -213,6 +233,10 @@ export async function applyGoogleChatInboundAccessPolicy(params: {
   let effectiveWasMentioned: boolean | undefined;
 
   if (isGroup) {
+    if (groupConfigResolved.deprecatedNameMatch) {
+      logVerbose(`drop group message (deprecated mutable group key matched, space=${spaceId})`);
+      return { ok: false };
+    }
     const groupAllowlistConfigured = groupConfigResolved.allowlistConfigured;
     const routeAccess = evaluateGroupRouteAccessForPolicy({
       groupPolicy,
