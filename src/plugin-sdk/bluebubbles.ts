@@ -93,6 +93,7 @@ export {
   normalizeWebhookPath,
   readWebhookBodyOrReject,
   registerWebhookTargetWithPluginRoute,
+  resolveRequestClientIp,
   resolveWebhookTargets,
   resolveWebhookTargetWithAuthOrRejectSync,
   withResolvedWebhookRequestPipeline,

@@ -21,6 +21,7 @@ import {
   createWebhookInFlightLimiter,
   registerWebhookTargetWithPluginRoute,
   readWebhookBodyOrReject,
+  resolveRequestClientIp,
   resolveWebhookTargetWithAuthOrRejectSync,
   withResolvedWebhookRequestPipeline,
 } from "./runtime-api.js";
@@ -34,6 +35,7 @@ const webhookRateLimiter = createFixedWindowRateLimiter({
 });
 const webhookInFlightLimiter = createWebhookInFlightLimiter();
 const debounceRegistry = createBlueBubblesDebounceRegistry({ processMessage });
+const LOOPBACK_TRUSTED_PROXY_CIDRS = ["127.0.0.0/8", "::1/128", "::ffff:127.0.0.0/104"];
 
 export function clearBlueBubblesWebhookSecurityStateForTest(): void {
   webhookRateLimiter.clear();
@@ -129,12 +131,27 @@ function safeEqualSecret(aRaw: string, bRaw: string): boolean {
   return timingSafeEqual(bufA, bufB);
 }
 
+function resolveWebhookClientIp(req: IncomingMessage): string {
+  if (!req.headers["x-forwarded-for"]) {
+    return req.socket.remoteAddress ?? "unknown";
+  }
+
+  // Only trust forwarded client IPs from local reverse proxies.
+  return (
+    resolveRequestClientIp(req, LOOPBACK_TRUSTED_PROXY_CIDRS) ??
+    req.socket.remoteAddress ??
+    "unknown"
+  );
+}
+
 export async function handleBlueBubblesWebhookRequest(
   req: IncomingMessage,
   res: ServerResponse,
 ): Promise<boolean> {
   const requestUrl = new URL(req.url ?? "/", "http://localhost");
-  const rateLimitKey = `${normalizeWebhookPath(requestUrl.pathname)}:${req.socket.remoteAddress ?? "unknown"}`;
+  const normalizedPath = normalizeWebhookPath(requestUrl.pathname);
+  const clientIp = resolveWebhookClientIp(req);
+  const rateLimitKey = `${normalizedPath}:${clientIp}`;
   return await withResolvedWebhookRequestPipeline({
     req,
     res,
@@ -143,6 +160,7 @@ export async function handleBlueBubblesWebhookRequest(
     rateLimiter: webhookRateLimiter,
     rateLimitKey,
     inFlightLimiter: webhookInFlightLimiter,
+    inFlightKey: `${normalizedPath}:${clientIp}`,
     handle: async ({ path, targets }) => {
       const url = requestUrl;
       const guidParam = url.searchParams.get("guid") ?? url.searchParams.get("password");

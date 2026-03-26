@@ -440,6 +440,62 @@ describe("BlueBubbles webhook monitor", () => {
       expect(mockDispatchReplyWithBufferedBlockDispatcher).not.toHaveBeenCalled();
     });
 
+    it("keeps forwarded clients behind loopback proxies in separate auth buckets", async () => {
+      setupWebhookTarget({
+        account: createMockAccount({
+          password: "99999999",
+        }),
+      });
+
+      let saw429 = false;
+      for (let i = 0; i < 130; i += 1) {
+        const candidate = String(i).padStart(8, "0");
+        const { res } = await dispatchWebhookPayloadForTest(
+          createPasswordQueryRequestParamsForTest({
+            password: candidate,
+            body: createTimestampedNewMessagePayloadForTest({
+              guid: `proxy-msg-${i}`,
+              text: `hello proxy ${i}`,
+            }),
+            remoteAddress: "127.0.0.1",
+            overrides: {
+              headers: {
+                host: "localhost",
+                "x-forwarded-for": "203.0.113.10",
+              },
+            },
+          }),
+        );
+
+        if (res.statusCode === 429) {
+          saw429 = true;
+          break;
+        }
+
+        expect(res.statusCode).toBe(401);
+      }
+
+      expect(saw429).toBe(true);
+
+      await expectWebhookRequestStatusForTest(
+        createPasswordQueryRequestParamsForTest({
+          password: "wrong-pass",
+          body: createTimestampedNewMessagePayloadForTest({
+            guid: "proxy-msg-other-client",
+            text: "hello other proxy client",
+          }),
+          remoteAddress: "127.0.0.1",
+          overrides: {
+            headers: {
+              host: "localhost",
+              "x-forwarded-for": "203.0.113.11",
+            },
+          },
+        }),
+        401,
+      );
+    });
+
     it("rejects ambiguous routing when multiple targets match the same password", async () => {
       const targetA = createProtectedWebhookTarget();
       const targetB = createProtectedWebhookTarget();
