@@ -16,6 +16,8 @@ import {
 } from "./monitor-shared.js";
 import { fetchBlueBubblesServerInfo } from "./probe.js";
 import {
+  WEBHOOK_RATE_LIMIT_DEFAULTS,
+  createFixedWindowRateLimiter,
   createWebhookInFlightLimiter,
   registerWebhookTargetWithPluginRoute,
   readWebhookBodyOrReject,
@@ -25,8 +27,18 @@ import {
 import { getBlueBubblesRuntime } from "./runtime.js";
 
 const webhookTargets = new Map<string, WebhookTarget[]>();
+const webhookRateLimiter = createFixedWindowRateLimiter({
+  windowMs: WEBHOOK_RATE_LIMIT_DEFAULTS.windowMs,
+  maxRequests: WEBHOOK_RATE_LIMIT_DEFAULTS.maxRequests,
+  maxTrackedKeys: WEBHOOK_RATE_LIMIT_DEFAULTS.maxTrackedKeys,
+});
 const webhookInFlightLimiter = createWebhookInFlightLimiter();
 const debounceRegistry = createBlueBubblesDebounceRegistry({ processMessage });
+
+export function clearBlueBubblesWebhookSecurityStateForTest(): void {
+  webhookRateLimiter.clear();
+  webhookInFlightLimiter.clear();
+}
 
 export function registerBlueBubblesWebhookTarget(target: WebhookTarget): () => void {
   const registered = registerWebhookTargetWithPluginRoute({
@@ -121,14 +133,18 @@ export async function handleBlueBubblesWebhookRequest(
   req: IncomingMessage,
   res: ServerResponse,
 ): Promise<boolean> {
+  const requestUrl = new URL(req.url ?? "/", "http://localhost");
+  const rateLimitKey = `${normalizeWebhookPath(requestUrl.pathname)}:${req.socket.remoteAddress ?? "unknown"}`;
   return await withResolvedWebhookRequestPipeline({
     req,
     res,
     targetsByPath: webhookTargets,
     allowMethods: ["POST"],
+    rateLimiter: webhookRateLimiter,
+    rateLimitKey,
     inFlightLimiter: webhookInFlightLimiter,
     handle: async ({ path, targets }) => {
-      const url = new URL(req.url ?? "/", "http://localhost");
+      const url = requestUrl;
       const guidParam = url.searchParams.get("guid") ?? url.searchParams.get("password");
       const headerToken =
         req.headers["x-guid"] ??

@@ -406,6 +406,40 @@ describe("BlueBubbles webhook monitor", () => {
       );
     });
 
+    it("rate limits repeated invalid password guesses from the same client", async () => {
+      setupWebhookTarget({
+        account: createMockAccount({
+          password: "99999999",
+        }),
+      });
+
+      let saw429 = false;
+      // Default webhook fixed-window budget is 120 requests/minute, so loop past it.
+      for (let i = 0; i < 130; i += 1) {
+        const candidate = String(i).padStart(8, "0");
+        const { res } = await dispatchWebhookPayloadForTest(
+          createPasswordQueryRequestParamsForTest({
+            password: candidate,
+            body: createTimestampedNewMessagePayloadForTest({
+              guid: `msg-${i}`,
+              text: `hello ${i}`,
+            }),
+            remoteAddress: "192.168.1.100",
+          }),
+        );
+
+        if (res.statusCode === 429) {
+          saw429 = true;
+          break;
+        }
+
+        expect(res.statusCode).toBe(401);
+      }
+
+      expect(saw429).toBe(true);
+      expect(mockDispatchReplyWithBufferedBlockDispatcher).not.toHaveBeenCalled();
+    });
+
     it("rejects ambiguous routing when multiple targets match the same password", async () => {
       const targetA = createProtectedWebhookTarget();
       const targetB = createProtectedWebhookTarget();
