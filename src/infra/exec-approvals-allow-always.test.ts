@@ -697,5 +697,15 @@ $0 \\"$1\\"" touch {marker}`,
       safeBins,
     });
     expect(persisted).toEqual([]);
+
+    const second = evaluateShellAllowlist({
+      command: `sh -lc '$0 "$@"' bash -lc 'id > /tmp/pwned'`,
+      allowlist: persisted.map((pattern) => ({ pattern })),
+      safeBins,
+      cwd: dir,
+      env,
+      platform: process.platform,
+    });
+    expect(second.allowlistSatisfied).toBe(false);
   });
 });
