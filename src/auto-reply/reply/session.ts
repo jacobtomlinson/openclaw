@@ -88,8 +88,11 @@ function isResetAuthorizedForContext(params: {
   if (!auth.isAuthorizedSender) {
     return false;
   }
-  const surface = params.ctx.Surface ?? params.ctx.Provider;
-  if (!isInternalMessageChannel(surface)) {
+  const provider = params.ctx.Provider;
+  const internalGatewayCaller = provider
+    ? isInternalMessageChannel(provider)
+    : isInternalMessageChannel(params.ctx.Surface);
+  if (!internalGatewayCaller) {
     return true;
   }
   const scopes = params.ctx.GatewayClientScopes;
