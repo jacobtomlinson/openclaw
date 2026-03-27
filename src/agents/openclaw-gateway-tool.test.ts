@@ -203,6 +203,32 @@ describe("gateway tool", () => {
     );
   });
 
+  it("rejects config.patch when a legacy tools.bash alias changes exec security", async () => {
+    const { callGatewayTool } = await import("./tools/gateway.js");
+    vi.mocked(callGatewayTool).mockImplementationOnce(async (method: string) => {
+      if (method === "config.get") {
+        return { hash: "hash-1", config: {} };
+      }
+      return { ok: true };
+    });
+    const tool = requireGatewayTool();
+
+    await expect(
+      tool.execute("call-legacy-protected-patch", {
+        action: "config.patch",
+        raw: '{ tools: { bash: { security: "full" } } }',
+      }),
+    ).rejects.toThrow(
+      "gateway config.patch cannot change protected config paths: tools.exec.security",
+    );
+    expect(callGatewayTool).toHaveBeenCalledWith("config.get", expect.any(Object), {});
+    expect(callGatewayTool).not.toHaveBeenCalledWith(
+      "config.patch",
+      expect.any(Object),
+      expect.anything(),
+    );
+  });
+
   it("rejects config.apply when it changes exec security settings", async () => {
     const { callGatewayTool } = await import("./tools/gateway.js");
     const tool = requireGatewayTool();
