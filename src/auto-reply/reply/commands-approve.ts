@@ -186,6 +186,24 @@ export const handleApproveCommand: CommandHandler = async (params, allowTextComm
     }
   }
 
+  // Keep plugin-ID routing independent from exec approval client enablement so
+  // forwarded plugin approvals remain resolvable, but still require explicit
+  // Discord approver membership for security parity.
+  if (
+    params.command.channel === "discord" &&
+    isPluginId &&
+    !isDiscordExecApprovalApprover({
+      cfg: params.cfg,
+      accountId: params.ctx.AccountId,
+      senderId: params.command.senderId,
+    })
+  ) {
+    return {
+      shouldContinue: false,
+      reply: { text: "❌ You are not authorized to approve plugin requests on Discord." },
+    };
+  }
+
   const missingScope = requireGatewayClientScopeForInternalChannel(params, {
     label: "/approve",
     allowedScopes: ["operator.approvals", "operator.admin"],
