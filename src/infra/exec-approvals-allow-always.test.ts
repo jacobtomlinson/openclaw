@@ -620,7 +620,7 @@ $0 \\"$1\\"" touch {marker}`,
   });
 
   it("prevents allow-always bypass for script wrapper chains", () => {
-    if (process.platform === "win32") {
+    if (process.platform !== "darwin" && process.platform !== "freebsd") {
       return;
     }
     const dir = makeTempDir();

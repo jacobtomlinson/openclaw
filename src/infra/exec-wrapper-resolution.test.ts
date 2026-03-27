@@ -13,6 +13,10 @@ import {
   unwrapKnownShellMultiplexerInvocation,
 } from "./exec-wrapper-resolution.js";
 
+function supportsScriptPositionalCommandForTests(): boolean {
+  return process.platform === "darwin" || process.platform === "freebsd";
+}
+
 describe("basenameLower", () => {
   test.each([
     { token: " Bun.CMD ", expected: "bun.cmd" },
@@ -122,11 +126,15 @@ describe("unwrapKnownDispatchWrapperInvocation", () => {
     },
     {
       argv: ["script", "-q", "/dev/null", "bash", "-lc", "echo hi"],
-      expected: { kind: "unwrapped", wrapper: "script", argv: ["bash", "-lc", "echo hi"] },
+      expected: supportsScriptPositionalCommandForTests()
+        ? { kind: "unwrapped", wrapper: "script", argv: ["bash", "-lc", "echo hi"] }
+        : { kind: "blocked", wrapper: "script" },
     },
     {
       argv: ["script", "-E", "always", "/dev/null", "bash", "-lc", "echo hi"],
-      expected: { kind: "unwrapped", wrapper: "script", argv: ["bash", "-lc", "echo hi"] },
+      expected: supportsScriptPositionalCommandForTests()
+        ? { kind: "unwrapped", wrapper: "script", argv: ["bash", "-lc", "echo hi"] }
+        : { kind: "blocked", wrapper: "script" },
     },
     {
       argv: ["stdbuf", "-o", "L", "bash", "-lc", "echo hi"],

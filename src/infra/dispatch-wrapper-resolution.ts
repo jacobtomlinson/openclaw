@@ -290,7 +290,14 @@ function unwrapTimeInvocation(argv: string[]): string[] | null {
   });
 }
 
+function supportsScriptPositionalCommand(platform: NodeJS.Platform = process.platform): boolean {
+  return platform === "darwin" || platform === "freebsd";
+}
+
 function unwrapScriptInvocation(argv: string[]): string[] | null {
+  if (!supportsScriptPositionalCommand()) {
+    return null;
+  }
   return scanWrapperInvocation(argv, {
     separators: new Set(["--"]),
     onToken: (token, lower) => {

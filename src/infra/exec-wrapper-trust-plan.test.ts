@@ -19,7 +19,7 @@ describe("resolveExecWrapperTrustPlan", () => {
   });
 
   test("unwraps script wrappers before evaluating nested shell payloads", () => {
-    if (process.platform === "win32") {
+    if (process.platform !== "darwin" && process.platform !== "freebsd") {
       return;
     }
     expect(
