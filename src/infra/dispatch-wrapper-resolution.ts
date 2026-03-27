@@ -293,19 +293,20 @@ function unwrapTimeInvocation(argv: string[]): string[] | null {
 function unwrapScriptInvocation(argv: string[]): string[] | null {
   return scanWrapperInvocation(argv, {
     separators: new Set(["--"]),
-    onToken: (_token, lower) => {
+    onToken: (token, lower) => {
       if (!lower.startsWith("-") || lower === "-") {
         return "stop";
       }
       if (lower === "-c" || lower === "--command" || lower === "-t" || lower.startsWith("-t")) {
         return "invalid";
       }
-      if (SCRIPT_FLAG_OPTIONS.has(lower)) {
-        return "continue";
-      }
-      const [flag] = lower.split("=", 2);
-      if (SCRIPT_OPTIONS_WITH_VALUE.has(flag)) {
+      const [flag] = token.split("=", 2);
+      const [lowerFlag] = lower.split("=", 2);
+      if (SCRIPT_OPTIONS_WITH_VALUE.has(flag) || SCRIPT_OPTIONS_WITH_VALUE.has(lowerFlag)) {
         return lower.includes("=") ? "continue" : "consume-next";
+      }
+      if (SCRIPT_FLAG_OPTIONS.has(flag) || SCRIPT_FLAG_OPTIONS.has(lowerFlag)) {
+        return "continue";
       }
       return "invalid";
     },

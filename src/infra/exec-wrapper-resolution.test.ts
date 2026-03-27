@@ -125,6 +125,10 @@ describe("unwrapKnownDispatchWrapperInvocation", () => {
       expected: { kind: "unwrapped", wrapper: "script", argv: ["bash", "-lc", "echo hi"] },
     },
     {
+      argv: ["script", "-E", "always", "/dev/null", "bash", "-lc", "echo hi"],
+      expected: { kind: "unwrapped", wrapper: "script", argv: ["bash", "-lc", "echo hi"] },
+    },
+    {
       argv: ["stdbuf", "-o", "L", "bash", "-lc", "echo hi"],
       expected: { kind: "unwrapped", wrapper: "stdbuf", argv: ["bash", "-lc", "echo hi"] },
     },
