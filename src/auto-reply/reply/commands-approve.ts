@@ -1,3 +1,7 @@
+import {
+  isDiscordExecApprovalApprover,
+  isDiscordExecApprovalClientEnabled,
+} from "../../../extensions/discord/api.js";
 import { callGateway } from "../../gateway/call.js";
 import { ErrorCodes } from "../../gateway/protocol/index.js";
 import { logVerbose } from "../../globals.js";
@@ -158,6 +162,26 @@ export const handleApproveCommand: CommandHandler = async (params, allowTextComm
       return {
         shouldContinue: false,
         reply: { text: "❌ You are not authorized to approve plugin requests on Telegram." },
+      };
+    }
+  }
+
+  if (params.command.channel === "discord" && !isPluginId) {
+    const discordApproverContext = {
+      cfg: params.cfg,
+      accountId: params.ctx.AccountId,
+      senderId: params.command.senderId,
+    };
+    if (!isDiscordExecApprovalClientEnabled(discordApproverContext)) {
+      return {
+        shouldContinue: false,
+        reply: { text: "❌ Discord exec approvals are not enabled for this bot account." },
+      };
+    }
+    if (!isDiscordExecApprovalApprover(discordApproverContext)) {
+      return {
+        shouldContinue: false,
+        reply: { text: "❌ You are not authorized to approve exec requests on Discord." },
       };
     }
   }

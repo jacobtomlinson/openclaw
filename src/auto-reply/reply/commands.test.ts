@@ -361,6 +361,24 @@ describe("/approve command", () => {
     } as OpenClawConfig;
   }
 
+  function createDiscordApproveCfg(
+    execApprovals: {
+      enabled: boolean;
+      approvers: string[];
+      target: "dm" | "channel" | "both";
+    } | null = { enabled: true, approvers: ["123"], target: "channel" },
+  ): OpenClawConfig {
+    return {
+      commands: { text: true },
+      channels: {
+        discord: {
+          allowFrom: ["*"],
+          ...(execApprovals ? { execApprovals } : {}),
+        },
+      },
+    } as OpenClawConfig;
+  }
+
   it("rejects invalid usage", async () => {
     const cfg = {
       commands: { text: true },
@@ -412,6 +430,44 @@ describe("/approve command", () => {
         params: { id: "abc12345", decision: "allow-once" },
       }),
     );
+  });
+
+  it("requires configured Discord approvers for exec approvals", async () => {
+    for (const testCase of [
+      {
+        name: "discord approvals disabled",
+        cfg: createDiscordApproveCfg(null),
+        senderId: "123",
+        expectedText: "Discord exec approvals are not enabled",
+      },
+      {
+        name: "discord non approver",
+        cfg: createDiscordApproveCfg({ enabled: true, approvers: ["999"], target: "channel" }),
+        senderId: "123",
+        expectedText: "not authorized to approve",
+      },
+      {
+        name: "discord approver",
+        cfg: createDiscordApproveCfg({ enabled: true, approvers: ["123"], target: "channel" }),
+        senderId: "123",
+        expectedText: "Approval allow-once submitted",
+      },
+    ] as const) {
+      callGatewayMock.mockReset();
+      callGatewayMock.mockResolvedValue({ ok: true });
+      const params = buildParams("/approve abc12345 allow-once", testCase.cfg, {
+        Provider: "discord",
+        Surface: "discord",
+        SenderId: testCase.senderId,
+      });
+
+      const result = await handleCommands(params);
+      expect(result.shouldContinue, testCase.name).toBe(false);
+      expect(result.reply?.text, testCase.name).toContain(testCase.expectedText);
+      expect(callGatewayMock, testCase.name).toHaveBeenCalledTimes(
+        testCase.name === "discord approver" ? 1 : 0,
+      );
+    }
   });
 
   it("rejects unauthorized or invalid Telegram /approve variants", async () => {
