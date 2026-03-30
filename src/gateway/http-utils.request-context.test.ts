@@ -86,6 +86,18 @@ describe("resolveTrustedHttpOperatorScopes", () => {
 
     expect(scopes).toEqual(["operator.admin", "operator.write"]);
   });
+
+  it("drops declared scopes when request auth resolved to a shared-secret method", () => {
+    const scopes = resolveTrustedHttpOperatorScopes(
+      createReq({
+        authorization: "Bearer upstream-idp-token",
+        "x-openclaw-scopes": "operator.admin, operator.write",
+      }),
+      { trustDeclaredOperatorScopes: false },
+    );
+
+    expect(scopes).toEqual([]);
+  });
 });
 
 describe("resolveHttpSenderIsOwner", () => {

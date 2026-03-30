@@ -3,14 +3,9 @@ import { describe, expect, it, vi } from "vitest";
 import type { ResolvedGatewayAuth } from "./auth.js";
 import { handleGatewayPostJsonEndpoint } from "./http-endpoint-helpers.js";
 
-vi.mock("./http-auth-helpers.js", () => {
-  return {
-    authorizeGatewayBearerRequestOrReply: vi.fn(),
-  };
-});
-
 vi.mock("./http-utils.js", () => {
   return {
+    authorizeGatewayHttpRequestOrReply: vi.fn(),
     resolveTrustedHttpOperatorScopes: vi.fn(),
   };
 });
@@ -29,9 +24,9 @@ vi.mock("./method-scopes.js", () => {
   };
 });
 
-const { authorizeGatewayBearerRequestOrReply } = await import("./http-auth-helpers.js");
 const { readJsonBodyOrError, sendJson, sendMethodNotAllowed } = await import("./http-common.js");
-const { resolveTrustedHttpOperatorScopes } = await import("./http-utils.js");
+const { authorizeGatewayHttpRequestOrReply, resolveTrustedHttpOperatorScopes } =
+  await import("./http-utils.js");
 const { authorizeOperatorScopesForMethod } = await import("./method-scopes.js");
 
 describe("handleGatewayPostJsonEndpoint", () => {
@@ -65,7 +60,7 @@ describe("handleGatewayPostJsonEndpoint", () => {
   });
 
   it("returns undefined when auth fails", async () => {
-    vi.mocked(authorizeGatewayBearerRequestOrReply).mockResolvedValue(false);
+    vi.mocked(authorizeGatewayHttpRequestOrReply).mockResolvedValue(null);
     const result = await handleGatewayPostJsonEndpoint(
       {
         url: "/v1/ok",
@@ -79,7 +74,9 @@ describe("handleGatewayPostJsonEndpoint", () => {
   });
 
   it("returns body when auth succeeds and JSON parsing succeeds", async () => {
-    vi.mocked(authorizeGatewayBearerRequestOrReply).mockResolvedValue(true);
+    vi.mocked(authorizeGatewayHttpRequestOrReply).mockResolvedValue({
+      trustDeclaredOperatorScopes: true,
+    });
     vi.mocked(readJsonBodyOrError).mockResolvedValue({ hello: "world" });
     const result = await handleGatewayPostJsonEndpoint(
       {
@@ -90,11 +87,16 @@ describe("handleGatewayPostJsonEndpoint", () => {
       {} as unknown as ServerResponse,
       { pathname: "/v1/ok", auth: {} as unknown as ResolvedGatewayAuth, maxBodyBytes: 123 },
     );
-    expect(result).toEqual({ body: { hello: "world" } });
+    expect(result).toEqual({
+      body: { hello: "world" },
+      requestAuth: { trustDeclaredOperatorScopes: true },
+    });
   });
 
   it("returns undefined and replies when required operator scope is missing", async () => {
-    vi.mocked(authorizeGatewayBearerRequestOrReply).mockResolvedValue(true);
+    vi.mocked(authorizeGatewayHttpRequestOrReply).mockResolvedValue({
+      trustDeclaredOperatorScopes: false,
+    });
     vi.mocked(resolveTrustedHttpOperatorScopes).mockReturnValue(["operator.approvals"]);
     vi.mocked(authorizeOperatorScopesForMethod).mockReturnValue({
       allowed: false,

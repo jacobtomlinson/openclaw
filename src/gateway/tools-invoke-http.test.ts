@@ -433,6 +433,36 @@ describe("POST /tools/invoke", () => {
     });
   });
 
+  it("blocks trusted-proxy local-direct token fallback from invoking tools over HTTP", async () => {
+    vi.mocked(authorizeHttpGatewayConnect).mockResolvedValueOnce({
+      ok: true,
+      method: "token",
+    });
+
+    const res = await postToolsInvoke({
+      port: sharedPort,
+      headers: {
+        authorization: "Bearer secret",
+        "content-type": "application/json",
+      },
+      body: {
+        tool: "agents_list",
+        action: "json",
+        args: {},
+        sessionKey: "main",
+      },
+    });
+
+    expect(res.status).toBe(403);
+    await expect(res.json()).resolves.toMatchObject({
+      ok: false,
+      error: {
+        type: "forbidden",
+        message: "gateway bearer auth cannot invoke tools over HTTP",
+      },
+    });
+  });
+
   it("uses before_tool_call adjusted params for HTTP tool execution", async () => {
     setMainAllowedTools({ allow: ["tools_invoke_test"] });
     hookMocks.runBeforeToolCallHook.mockImplementationOnce(async () => ({
