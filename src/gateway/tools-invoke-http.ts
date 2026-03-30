@@ -40,7 +40,7 @@ import {
   sendMethodNotAllowed,
 } from "./http-common.js";
 import { getHeader } from "./http-utils.js";
-import { ADMIN_SCOPE, authorizeOperatorScopesForMethod } from "./method-scopes.js";
+import { authorizeOperatorScopesForMethod } from "./method-scopes.js";
 
 const DEFAULT_BODY_BYTES = 2 * 1024 * 1024;
 const MEMORY_TOOL_NAMES = new Set(["memory_search", "memory_get"]);
@@ -323,10 +323,9 @@ export async function handleToolsInvokeHttpRequest(
     Array.isArray(gatewayToolsCfg?.deny) ? gatewayToolsCfg.deny : [],
   );
   const gatewayDenySet = new Set(gatewayDenyNames);
-  const ownerFiltered = applyOwnerOnlyToolPolicy(
-    subagentFiltered,
-    requestedScopes.includes(ADMIN_SCOPE),
-  );
+  // HTTP bearer auth does not bind a device-owner identity, so owner-only tools
+  // stay unavailable on this surface even when callers assert admin scopes.
+  const ownerFiltered = applyOwnerOnlyToolPolicy(subagentFiltered, false);
   const gatewayFiltered = ownerFiltered.filter((t) => !gatewayDenySet.has(t.name));
 
   const tool = gatewayFiltered.find((t) => t.name === toolName);

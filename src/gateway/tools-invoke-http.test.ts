@@ -609,12 +609,7 @@ describe("POST /tools/invoke", () => {
       sessionKey: "main",
     });
 
-    // Ensure we didn't hit the HTTP deny list or owner-only filter (404).
-    // Invalid args should still map to 400 for admin callers.
-    expect(res.status).toBe(400);
-    const body = await res.json();
-    expect(body.ok).toBe(false);
-    expect(body.error?.type).toBe("tool_error");
+    expect(res.status).toBe(404);
   });
 
   it("treats gateway.tools.deny as higher priority than gateway.tools.allow", async () => {
@@ -755,8 +750,7 @@ describe("POST /tools/invoke", () => {
       tool: "owner_only_test",
       sessionKey: "main",
     });
-    const allowedBody = await expectOkInvokeResponse(allowedRes);
-    expect(allowedBody.result).toMatchObject({ ok: true, result: "owner-only" });
+    expect(allowedRes.status).toBe(404);
   });
 
   it("extends the HTTP deny list to high-risk execution and file tools", async () => {

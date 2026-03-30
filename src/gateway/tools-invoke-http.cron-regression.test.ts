@@ -125,7 +125,7 @@ describe("tools invoke HTTP denylist", () => {
     expect(cronRes.status).toBe(404);
   });
 
-  it("allows cron only when explicitly enabled in gateway.tools.allow", async () => {
+  it("keeps cron hidden even when explicitly enabled in gateway.tools.allow", async () => {
     cfg = {
       gateway: {
         tools: {
@@ -136,10 +136,10 @@ describe("tools invoke HTTP denylist", () => {
 
     const cronRes = await invoke("cron", "operator.admin");
 
-    expect(cronRes.status).toBe(200);
+    expect(cronRes.status).toBe(404);
   });
 
-  it("keeps cron available for admin while gateway stays hidden under coding profile", async () => {
+  it("keeps cron and gateway hidden under the coding profile", async () => {
     cfg = {
       tools: {
         profile: "coding",
@@ -154,7 +154,7 @@ describe("tools invoke HTTP denylist", () => {
     const cronRes = await invoke("cron", "operator.admin");
     const gatewayRes = await invoke("gateway");
 
-    expect(cronRes.status).toBe(200);
+    expect(cronRes.status).toBe(404);
     expect(gatewayRes.status).toBe(404);
   });
 });
