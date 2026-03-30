@@ -25,7 +25,10 @@ const ENV_INLINE_VALUE_PREFIXES = [
   "--block-signal=",
 ] as const;
 const ENV_FLAG_OPTIONS = new Set(["-i", "--ignore-environment", "-0", "--null"]);
+const CAFFEINATE_FLAG_OPTIONS = new Set(["d", "i", "m", "s", "u"]);
+const CAFFEINATE_OPTIONS_WITH_VALUE = new Set(["t", "w"]);
 const NICE_OPTIONS_WITH_VALUE = new Set(["-n", "--adjustment", "--priority"]);
+const SANDBOX_EXEC_OPTIONS_WITH_VALUE = ["-D", "-f", "-n", "-p"] as const;
 const STDBUF_OPTIONS_WITH_VALUE = new Set(["-i", "--input", "-o", "--output", "-e", "--error"]);
 const TIME_FLAG_OPTIONS = new Set([
   "-a",
@@ -224,6 +227,34 @@ function unwrapNiceInvocation(argv: string[]): string[] | null {
   });
 }
 
+function unwrapCaffeinateInvocation(argv: string[]): string[] | null {
+  return scanWrapperInvocation(argv, {
+    separators: new Set(["--"]),
+    onToken: (token, lower) => {
+      if (!lower.startsWith("-") || lower === "-") {
+        return "stop";
+      }
+      if (lower.startsWith("--")) {
+        return "invalid";
+      }
+      for (let idx = 1; idx < lower.length; idx += 1) {
+        const flag = lower[idx];
+        if (!flag) {
+          break;
+        }
+        if (CAFFEINATE_FLAG_OPTIONS.has(flag)) {
+          continue;
+        }
+        if (CAFFEINATE_OPTIONS_WITH_VALUE.has(flag)) {
+          return idx === lower.length - 1 ? "consume-next" : "continue";
+        }
+        return "invalid";
+      }
+      return "continue";
+    },
+  });
+}
+
 function unwrapNohupInvocation(argv: string[]): string[] | null {
   return scanWrapperInvocation(argv, {
     separators: new Set(["--"]),
@@ -232,6 +263,29 @@ function unwrapNohupInvocation(argv: string[]): string[] | null {
         return "stop";
       }
       return lower === "--help" || lower === "--version" ? "continue" : "invalid";
+    },
+  });
+}
+
+function unwrapSandboxExecInvocation(argv: string[]): string[] | null {
+  return scanWrapperInvocation(argv, {
+    separators: new Set(["--"]),
+    onToken: (token, lower) => {
+      if (!token.startsWith("-") || token === "-") {
+        return "stop";
+      }
+      if (lower.startsWith("--")) {
+        return "invalid";
+      }
+      for (const flag of SANDBOX_EXEC_OPTIONS_WITH_VALUE) {
+        if (token === flag) {
+          return "consume-next";
+        }
+        if (token.startsWith(flag)) {
+          return "continue";
+        }
+      }
+      return "invalid";
     },
   });
 }
@@ -327,6 +381,7 @@ type DispatchWrapperSpec = {
 };
 
 const DISPATCH_WRAPPER_SPECS: readonly DispatchWrapperSpec[] = [
+  { name: "caffeinate", unwrap: unwrapCaffeinateInvocation, transparentUsage: true },
   { name: "chrt" },
   { name: "doas" },
   {
@@ -337,6 +392,7 @@ const DISPATCH_WRAPPER_SPECS: readonly DispatchWrapperSpec[] = [
   { name: "ionice" },
   { name: "nice", unwrap: unwrapNiceInvocation, transparentUsage: true },
   { name: "nohup", unwrap: unwrapNohupInvocation, transparentUsage: true },
+  { name: "sandbox-exec", unwrap: unwrapSandboxExecInvocation, transparentUsage: true },
   { name: "script", unwrap: unwrapScriptInvocation, transparentUsage: true },
   { name: "setsid" },
   { name: "stdbuf", unwrap: unwrapStdbufInvocation, transparentUsage: true },

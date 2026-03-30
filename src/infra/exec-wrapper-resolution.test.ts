@@ -61,6 +61,8 @@ describe("normalizeExecutableToken", () => {
 
 describe("wrapper classification", () => {
   test.each([
+    { token: "caffeinate", dispatch: true, shell: false },
+    { token: "sandbox-exec", dispatch: true, shell: false },
     { token: "sudo", dispatch: true, shell: false },
     { token: "script", dispatch: true, shell: false },
     { token: "time", dispatch: true, shell: false },
@@ -131,6 +133,14 @@ describe("unwrapEnvInvocation", () => {
 describe("unwrapKnownDispatchWrapperInvocation", () => {
   test.each([
     {
+      argv: ["caffeinate", "bash", "-lc", "echo hi"],
+      expected: { kind: "unwrapped", wrapper: "caffeinate", argv: ["bash", "-lc", "echo hi"] },
+    },
+    {
+      argv: ["caffeinate", "-disu", "-t", "60", "bash", "-lc", "echo hi"],
+      expected: { kind: "unwrapped", wrapper: "caffeinate", argv: ["bash", "-lc", "echo hi"] },
+    },
+    {
       argv: ["env", "--", "bash", "-lc", "echo hi"],
       expected: { kind: "unwrapped", wrapper: "env", argv: ["bash", "-lc", "echo hi"] },
     },
@@ -141,6 +151,19 @@ describe("unwrapKnownDispatchWrapperInvocation", () => {
     {
       argv: ["nohup", "--", "bash", "-lc", "echo hi"],
       expected: { kind: "unwrapped", wrapper: "nohup", argv: ["bash", "-lc", "echo hi"] },
+    },
+    {
+      argv: [
+        "sandbox-exec",
+        "-D",
+        "HOME=/tmp/openclaw",
+        "-p",
+        "(deny default)",
+        "bash",
+        "-lc",
+        "echo hi",
+      ],
+      expected: { kind: "unwrapped", wrapper: "sandbox-exec", argv: ["bash", "-lc", "echo hi"] },
     },
     {
       argv: ["script", "-q", "/dev/null", "bash", "-lc", "echo hi"],
@@ -165,8 +188,20 @@ describe("unwrapKnownDispatchWrapperInvocation", () => {
       expected: { kind: "unwrapped", wrapper: "timeout", argv: ["bash", "-lc", "echo hi"] },
     },
     {
+      argv: ["caffeinate", "-t"],
+      expected: { kind: "blocked", wrapper: "caffeinate" },
+    },
+    {
       argv: ["script", "-q", "/dev/null"],
       expected: { kind: "blocked", wrapper: "script" },
+    },
+    {
+      argv: ["sandbox-exec", "-p"],
+      expected: { kind: "blocked", wrapper: "sandbox-exec" },
+    },
+    {
+      argv: ["sandbox-exec", "-x", "bash", "-lc", "echo hi"],
+      expected: { kind: "blocked", wrapper: "sandbox-exec" },
     },
     {
       argv: ["sudo", "bash", "-lc", "echo hi"],
@@ -202,6 +237,16 @@ describe("resolveDispatchWrapperTrustPlan", () => {
 
   test.each([
     {
+      argv: ["caffeinate", "bash", "-lc", "echo hi"],
+      wrapper: "caffeinate",
+      effectiveArgv: ["bash", "-lc", "echo hi"],
+    },
+    {
+      argv: ["caffeinate", "-disu", "-w", "123", "bash", "-lc", "echo hi"],
+      wrapper: "caffeinate",
+      effectiveArgv: ["bash", "-lc", "echo hi"],
+    },
+    {
       argv: ["nice", "-n", "5", "bash", "-lc", "echo hi"],
       wrapper: "nice",
       effectiveArgv: ["bash", "-lc", "echo hi"],
@@ -209,6 +254,19 @@ describe("resolveDispatchWrapperTrustPlan", () => {
     {
       argv: ["nohup", "--", "bash", "-lc", "echo hi"],
       wrapper: "nohup",
+      effectiveArgv: ["bash", "-lc", "echo hi"],
+    },
+    {
+      argv: [
+        "sandbox-exec",
+        "-DHOME=/tmp/openclaw",
+        "-p",
+        "(deny default)",
+        "bash",
+        "-lc",
+        "echo hi",
+      ],
+      wrapper: "sandbox-exec",
       effectiveArgv: ["bash", "-lc", "echo hi"],
     },
     {
