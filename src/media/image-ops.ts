@@ -65,6 +65,10 @@ function assertImagePixelLimit(metadata: ImageMetadata): void {
   }
 }
 
+function readUInt24LE(buffer: Buffer, offset: number): number {
+  return buffer[offset] | (buffer[offset + 1] << 8) | (buffer[offset + 2] << 16);
+}
+
 function readPngMetadata(buffer: Buffer): ImageMetadata | null {
   const pngSignature = "\x89PNG\r\n\x1a\n";
   if (buffer.length < 24 || buffer.toString("latin1", 0, 8) !== pngSignature) {
@@ -139,8 +143,104 @@ function readJpegMetadata(buffer: Buffer): ImageMetadata | null {
   return null;
 }
 
+function readWebpMetadata(buffer: Buffer): ImageMetadata | null {
+  if (
+    buffer.length < 30 ||
+    buffer.toString("ascii", 0, 4) !== "RIFF" ||
+    buffer.toString("ascii", 8, 12) !== "WEBP"
+  ) {
+    return null;
+  }
+
+  const chunkType = buffer.toString("ascii", 12, 16);
+  switch (chunkType) {
+    case "VP8X":
+      return normalizeImageMetadata(1 + readUInt24LE(buffer, 24), 1 + readUInt24LE(buffer, 27));
+    case "VP8 ":
+      if (buffer[23] !== 0x9d || buffer[24] !== 0x01 || buffer[25] !== 0x2a) {
+        return null;
+      }
+      return normalizeImageMetadata(
+        buffer.readUInt16LE(26) & 0x3fff,
+        buffer.readUInt16LE(28) & 0x3fff,
+      );
+    case "VP8L": {
+      if (buffer[20] !== 0x2f) {
+        return null;
+      }
+      const packed = buffer.readUInt32LE(21);
+      return normalizeImageMetadata((packed & 0x3fff) + 1, ((packed >> 14) & 0x3fff) + 1);
+    }
+    default:
+      return null;
+  }
+}
+
+const ISO_BMFF_IMAGE_BRANDS = new Set([
+  "avif",
+  "avis",
+  "heic",
+  "heif",
+  "heim",
+  "heis",
+  "heix",
+  "hevc",
+  "hevm",
+  "hevx",
+  "mif1",
+  "msf1",
+]);
+
+function readIsoBmffMetadata(buffer: Buffer): ImageMetadata | null {
+  if (buffer.length < 24 || buffer.toString("ascii", 4, 8) !== "ftyp") {
+    return null;
+  }
+
+  const ftypSize = buffer.readUInt32BE(0);
+  if (ftypSize < 16 || ftypSize > buffer.length) {
+    return null;
+  }
+
+  let hasSupportedBrand = false;
+  for (let offset = 8; offset + 4 <= ftypSize; offset += 4) {
+    if (ISO_BMFF_IMAGE_BRANDS.has(buffer.toString("ascii", offset, offset + 4))) {
+      hasSupportedBrand = true;
+      break;
+    }
+  }
+  if (!hasSupportedBrand) {
+    return null;
+  }
+
+  for (let offset = 4; offset + 16 <= buffer.length; offset += 1) {
+    if (buffer.toString("ascii", offset, offset + 4) !== "ispe") {
+      continue;
+    }
+    const boxOffset = offset - 4;
+    if (boxOffset < 0 || boxOffset + 20 > buffer.length) {
+      continue;
+    }
+    const boxSize = buffer.readUInt32BE(boxOffset);
+    if (boxSize < 20 || boxOffset + boxSize > buffer.length || buffer[boxOffset + 8] !== 0) {
+      continue;
+    }
+    return normalizeImageMetadata(
+      buffer.readUInt32BE(boxOffset + 12),
+      buffer.readUInt32BE(boxOffset + 16),
+    );
+  }
+
+  return null;
+}
+
 export function probeImageMetadataFromHeader(buffer: Buffer): ImageMetadata | null {
-  return readPngMetadata(buffer) ?? readGifMetadata(buffer) ?? readJpegMetadata(buffer);
+  return (
+    readPngMetadata(buffer) ??
+    readGifMetadata(buffer) ??
+    readJpegMetadata(buffer) ??
+    readWebpMetadata(buffer) ??
+    readIsoBmffMetadata(buffer)
+  );
 }
 
 function isSharpPixelLimitError(error: unknown): boolean {
@@ -173,12 +273,17 @@ async function assertImageBufferWithinPixelLimit(buffer: Buffer): Promise<void> 
   }
 
   try {
-    await getSharpImageMetadata(buffer);
+    const sharpMetadata = await getSharpImageMetadata(buffer);
+    if (sharpMetadata) {
+      return;
+    }
   } catch (error) {
     if (error instanceof ImagePixelLimitError) {
       throw error;
     }
   }
+
+  throw new Error("Unable to verify image dimensions before processing");
 }
 
 /**
@@ -364,7 +469,6 @@ export async function getImageMetadata(buffer: Buffer): Promise<ImageMetadata | 
   if (headerMetadata) {
     try {
       assertImagePixelLimit(headerMetadata);
-      return headerMetadata;
     } catch {
       return null;
     }

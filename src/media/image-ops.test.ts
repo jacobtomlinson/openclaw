@@ -53,6 +53,41 @@ function createJpegHeader(width: number, height: number): Buffer {
   return buffer;
 }
 
+function writeUInt24LE(buffer: Buffer, offset: number, value: number): void {
+  buffer[offset] = value & 0xff;
+  buffer[offset + 1] = (value >> 8) & 0xff;
+  buffer[offset + 2] = (value >> 16) & 0xff;
+}
+
+function createWebpHeader(width: number, height: number): Buffer {
+  const buffer = Buffer.alloc(30);
+  buffer.write("RIFF", 0, "ascii");
+  buffer.writeUInt32LE(buffer.length - 8, 4);
+  buffer.write("WEBP", 8, "ascii");
+  buffer.write("VP8X", 12, "ascii");
+  buffer.writeUInt32LE(10, 16);
+  writeUInt24LE(buffer, 24, width - 1);
+  writeUInt24LE(buffer, 27, height - 1);
+  return buffer;
+}
+
+function createHeicHeader(width: number, height: number): Buffer {
+  const buffer = Buffer.alloc(44);
+  buffer.writeUInt32BE(24, 0);
+  buffer.write("ftyp", 4, "ascii");
+  buffer.write("heic", 8, "ascii");
+  buffer.writeUInt32BE(0, 12);
+  buffer.write("mif1", 16, "ascii");
+  buffer.write("heic", 20, "ascii");
+
+  buffer.writeUInt32BE(20, 24);
+  buffer.write("ispe", 28, "ascii");
+  buffer.writeUInt32BE(0, 32);
+  buffer.writeUInt32BE(width, 36);
+  buffer.writeUInt32BE(height, 40);
+  return buffer;
+}
+
 async function loadImageOpsWithSharpMock(sharpFactory: (...args: unknown[]) => unknown) {
   vi.resetModules();
   vi.doMock("sharp", () => ({ default: sharpFactory }));
@@ -76,12 +111,27 @@ describe("probeImageMetadataFromHeader", () => {
       buffer: createJpegHeader(800, 600),
       expected: { width: 800, height: 600 },
     },
+    {
+      name: "webp",
+      buffer: createWebpHeader(1024, 768),
+      expected: { width: 1024, height: 768 },
+    },
+    {
+      name: "heic",
+      buffer: createHeicHeader(4032, 3024),
+      expected: { width: 4032, height: 3024 },
+    },
   ] as const)("reads %s dimensions without decoding image data", ({ buffer, expected }) => {
     expect(probeImageMetadataFromHeader(buffer)).toEqual(expected);
   });
 });
 
 describe("image pixel limit guard", () => {
+  it("returns null metadata for malformed images that only have a recognizable header", async () => {
+    await expect(getImageMetadata(createPngHeader(640, 480))).resolves.toBeNull();
+    expect(runExecMock).not.toHaveBeenCalled();
+  });
+
   it("returns null metadata for oversized image headers", async () => {
     const oversized = createPngHeader(5_001, 5_001);
 
@@ -104,22 +154,19 @@ describe("image pixel limit guard", () => {
     expect(runExecMock).not.toHaveBeenCalled();
   });
 
-  it("falls back to sips metadata when sharp cannot decode an unrecognized format", async () => {
+  it("rejects oversized HEIC headers before invoking sips when sharp is unavailable", async () => {
     process.env.OPENCLAW_IMAGE_BACKEND = "sips";
-    runExecMock.mockResolvedValueOnce({
-      stdout: "pixelWidth: 40\npixelHeight: 50\n",
-    });
 
     try {
-      const { getImageMetadata: getImageMetadataWithSharpFailure } =
+      const { convertHeicToJpeg: convertHeicToJpegWithSharpFailure } =
         await loadImageOpsWithSharpMock(() => {
           throw new Error("sharp cannot decode this format");
         });
 
       await expect(
-        getImageMetadataWithSharpFailure(Buffer.from("not-a-known-header")),
-      ).resolves.toEqual({ width: 40, height: 50 });
-      expect(runExecMock).toHaveBeenCalledTimes(1);
+        convertHeicToJpegWithSharpFailure(createHeicHeader(5_001, 5_001)),
+      ).rejects.toThrow(/maximum allowed pixel count/i);
+      expect(runExecMock).not.toHaveBeenCalled();
     } finally {
       vi.doUnmock("sharp");
       vi.resetModules();
