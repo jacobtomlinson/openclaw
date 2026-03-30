@@ -732,6 +732,28 @@ describe("OpenResponses HTTP API (e2e)", () => {
     // Requested HTTP scopes do not prove owner identity for owner-only tools.
     expect(adminScopeOpts?.senderIsOwner).toBe(false);
     await ensureResponseConsumed(adminScopeResponse);
+
+    agentCommand.mockClear();
+    agentCommand.mockImplementationOnce((async (opts: unknown) =>
+      buildAssistantDeltaResult({
+        opts,
+        emit: emitAgentEvent,
+        deltas: ["he", "llo"],
+        text: "hello",
+      })) as never);
+
+    const streamingResponse = await postResponses(
+      port,
+      { stream: true, model: "openclaw", input: "hi" },
+      { "x-openclaw-scopes": "operator.admin, operator.write" },
+    );
+    expect(streamingResponse.status).toBe(200);
+    const streamingOpts = (agentCommand.mock.calls[0] as unknown[] | undefined)?.[0] as
+      | { senderIsOwner?: boolean }
+      | undefined;
+    expect(streamingOpts?.senderIsOwner).toBe(false);
+    const streamingEvents = parseSseEvents(await streamingResponse.text());
+    expect(streamingEvents.some((event) => event.event === "response.completed")).toBe(true);
   });
 
   it("preserves assistant text alongside non-stream function_call output", async () => {
