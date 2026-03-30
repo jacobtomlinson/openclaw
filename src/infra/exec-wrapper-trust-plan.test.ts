@@ -5,7 +5,7 @@ describe("resolveExecWrapperTrustPlan", () => {
   test.each([
     {
       name: "unwraps caffeinate wrappers before evaluating nested shell payloads",
-      enabled: process.platform !== "win32",
+      enabled: process.platform === "darwin",
       argv: ["/usr/bin/caffeinate", "-disu", "-t", "60", "sh", "-lc", "echo hi"],
       expected: {
         argv: ["sh", "-lc", "echo hi"],
@@ -31,7 +31,7 @@ describe("resolveExecWrapperTrustPlan", () => {
     },
     {
       name: "unwraps sandbox-exec wrappers before evaluating nested shell payloads",
-      enabled: process.platform !== "win32",
+      enabled: process.platform === "darwin",
       argv: ["/usr/bin/sandbox-exec", "-p", "(deny default)", "sh", "-lc", "echo hi"],
       expected: {
         argv: ["sh", "-lc", "echo hi"],

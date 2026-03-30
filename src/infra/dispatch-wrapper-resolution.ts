@@ -386,10 +386,16 @@ type DispatchWrapperSpec = {
   name: string;
   unwrap?: (argv: string[]) => string[] | null;
   transparentUsage?: boolean | ((argv: string[]) => boolean);
+  supportedPlatforms?: readonly NodeJS.Platform[];
 };
 
 const DISPATCH_WRAPPER_SPECS: readonly DispatchWrapperSpec[] = [
-  { name: "caffeinate", unwrap: unwrapCaffeinateInvocation, transparentUsage: true },
+  {
+    name: "caffeinate",
+    unwrap: unwrapCaffeinateInvocation,
+    transparentUsage: true,
+    supportedPlatforms: ["darwin"],
+  },
   { name: "chrt" },
   { name: "doas" },
   {
@@ -400,7 +406,12 @@ const DISPATCH_WRAPPER_SPECS: readonly DispatchWrapperSpec[] = [
   { name: "ionice" },
   { name: "nice", unwrap: unwrapNiceInvocation, transparentUsage: true },
   { name: "nohup", unwrap: unwrapNohupInvocation, transparentUsage: true },
-  { name: "sandbox-exec", unwrap: unwrapSandboxExecInvocation, transparentUsage: true },
+  {
+    name: "sandbox-exec",
+    unwrap: unwrapSandboxExecInvocation,
+    transparentUsage: true,
+    supportedPlatforms: ["darwin"],
+  },
   { name: "script", unwrap: unwrapScriptInvocation, transparentUsage: true },
   { name: "setsid" },
   { name: "stdbuf", unwrap: unwrapStdbufInvocation, transparentUsage: true },
@@ -443,8 +454,16 @@ function unwrapDispatchWrapper(
     : blockDispatchWrapper(wrapper);
 }
 
+function isDispatchWrapperSupported(
+  spec: DispatchWrapperSpec | undefined,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  return !spec?.supportedPlatforms || spec.supportedPlatforms.includes(platform);
+}
+
 export function isDispatchWrapperExecutable(token: string): boolean {
-  return DISPATCH_WRAPPER_SPEC_BY_NAME.has(normalizeExecutableToken(token));
+  const spec = DISPATCH_WRAPPER_SPEC_BY_NAME.get(normalizeExecutableToken(token));
+  return spec !== undefined && isDispatchWrapperSupported(spec);
 }
 
 export function unwrapKnownDispatchWrapperInvocation(argv: string[]): DispatchWrapperUnwrapResult {
@@ -454,7 +473,7 @@ export function unwrapKnownDispatchWrapperInvocation(argv: string[]): DispatchWr
   }
   const wrapper = normalizeExecutableToken(token0);
   const spec = DISPATCH_WRAPPER_SPEC_BY_NAME.get(wrapper);
-  if (!spec) {
+  if (!spec || !isDispatchWrapperSupported(spec)) {
     return { kind: "not-wrapper" };
   }
   return spec.unwrap

@@ -17,6 +17,10 @@ function supportsScriptPositionalCommandForTests(): boolean {
   return process.platform === "darwin" || process.platform === "freebsd";
 }
 
+function supportsDarwinNativeDispatchWrappersForTests(): boolean {
+  return process.platform === "darwin";
+}
+
 function expectTransparentDispatchWrapperCase(params: {
   argv: string[];
   wrapper: string;
@@ -61,8 +65,12 @@ describe("normalizeExecutableToken", () => {
 
 describe("wrapper classification", () => {
   test.each([
-    { token: "caffeinate", dispatch: true, shell: false },
-    { token: "sandbox-exec", dispatch: true, shell: false },
+    { token: "caffeinate", dispatch: supportsDarwinNativeDispatchWrappersForTests(), shell: false },
+    {
+      token: "sandbox-exec",
+      dispatch: supportsDarwinNativeDispatchWrappersForTests(),
+      shell: false,
+    },
     { token: "sudo", dispatch: true, shell: false },
     { token: "script", dispatch: true, shell: false },
     { token: "time", dispatch: true, shell: false },
@@ -134,11 +142,15 @@ describe("unwrapKnownDispatchWrapperInvocation", () => {
   test.each([
     {
       argv: ["caffeinate", "bash", "-lc", "echo hi"],
-      expected: { kind: "unwrapped", wrapper: "caffeinate", argv: ["bash", "-lc", "echo hi"] },
+      expected: supportsDarwinNativeDispatchWrappersForTests()
+        ? { kind: "unwrapped", wrapper: "caffeinate", argv: ["bash", "-lc", "echo hi"] }
+        : { kind: "not-wrapper" },
     },
     {
       argv: ["caffeinate", "-disu", "-t", "60", "bash", "-lc", "echo hi"],
-      expected: { kind: "unwrapped", wrapper: "caffeinate", argv: ["bash", "-lc", "echo hi"] },
+      expected: supportsDarwinNativeDispatchWrappersForTests()
+        ? { kind: "unwrapped", wrapper: "caffeinate", argv: ["bash", "-lc", "echo hi"] }
+        : { kind: "not-wrapper" },
     },
     {
       argv: ["env", "--", "bash", "-lc", "echo hi"],
@@ -163,7 +175,9 @@ describe("unwrapKnownDispatchWrapperInvocation", () => {
         "-lc",
         "echo hi",
       ],
-      expected: { kind: "unwrapped", wrapper: "sandbox-exec", argv: ["bash", "-lc", "echo hi"] },
+      expected: supportsDarwinNativeDispatchWrappersForTests()
+        ? { kind: "unwrapped", wrapper: "sandbox-exec", argv: ["bash", "-lc", "echo hi"] }
+        : { kind: "not-wrapper" },
     },
     {
       argv: ["script", "-q", "/dev/null", "bash", "-lc", "echo hi"],
@@ -189,11 +203,15 @@ describe("unwrapKnownDispatchWrapperInvocation", () => {
     },
     {
       argv: ["caffeinate", "-t"],
-      expected: { kind: "blocked", wrapper: "caffeinate" },
+      expected: supportsDarwinNativeDispatchWrappersForTests()
+        ? { kind: "blocked", wrapper: "caffeinate" }
+        : { kind: "not-wrapper" },
     },
     {
       argv: ["caffeinate", "-D", "bash", "-lc", "echo hi"],
-      expected: { kind: "blocked", wrapper: "caffeinate" },
+      expected: supportsDarwinNativeDispatchWrappersForTests()
+        ? { kind: "blocked", wrapper: "caffeinate" }
+        : { kind: "not-wrapper" },
     },
     {
       argv: ["script", "-q", "/dev/null"],
@@ -201,19 +219,27 @@ describe("unwrapKnownDispatchWrapperInvocation", () => {
     },
     {
       argv: ["sandbox-exec", "bash", "-lc", "echo hi"],
-      expected: { kind: "blocked", wrapper: "sandbox-exec" },
+      expected: supportsDarwinNativeDispatchWrappersForTests()
+        ? { kind: "blocked", wrapper: "sandbox-exec" }
+        : { kind: "not-wrapper" },
     },
     {
       argv: ["sandbox-exec", "-DHOME=/tmp/openclaw", "bash", "-lc", "echo hi"],
-      expected: { kind: "blocked", wrapper: "sandbox-exec" },
+      expected: supportsDarwinNativeDispatchWrappersForTests()
+        ? { kind: "blocked", wrapper: "sandbox-exec" }
+        : { kind: "not-wrapper" },
     },
     {
       argv: ["sandbox-exec", "-p"],
-      expected: { kind: "blocked", wrapper: "sandbox-exec" },
+      expected: supportsDarwinNativeDispatchWrappersForTests()
+        ? { kind: "blocked", wrapper: "sandbox-exec" }
+        : { kind: "not-wrapper" },
     },
     {
       argv: ["sandbox-exec", "-x", "bash", "-lc", "echo hi"],
-      expected: { kind: "blocked", wrapper: "sandbox-exec" },
+      expected: supportsDarwinNativeDispatchWrappersForTests()
+        ? { kind: "blocked", wrapper: "sandbox-exec" }
+        : { kind: "not-wrapper" },
     },
     {
       argv: ["sudo", "bash", "-lc", "echo hi"],
@@ -297,6 +323,19 @@ describe("resolveDispatchWrapperTrustPlan", () => {
       effectiveArgv: ["bash", "-lc", "echo hi"],
     },
   ])("keeps transparent wrapper handling in sync for %s", ({ argv, wrapper, effectiveArgv }) => {
+    if (
+      (wrapper === "caffeinate" || wrapper === "sandbox-exec") &&
+      !supportsDarwinNativeDispatchWrappersForTests()
+    ) {
+      expect(isDispatchWrapperExecutable(wrapper)).toBe(false);
+      expect(unwrapKnownDispatchWrapperInvocation(argv)).toEqual({ kind: "not-wrapper" });
+      expect(resolveDispatchWrapperTrustPlan(argv)).toEqual({
+        argv,
+        wrappers: [],
+        policyBlocked: false,
+      });
+      return;
+    }
     expectTransparentDispatchWrapperCase({ argv, wrapper, effectiveArgv });
   });
 

@@ -52,12 +52,12 @@ describe("system run command helpers", () => {
   test.each([
     {
       argv: ["/usr/bin/caffeinate", "-disu", "-t", "60", "/bin/bash", "-lc", "echo hi"],
-      expected: "echo hi",
+      expected: process.platform === "darwin" ? "echo hi" : null,
     },
     { argv: ["/usr/bin/nice", "/bin/bash", "-lc", "echo hi"], expected: "echo hi" },
     {
       argv: ["/usr/bin/sandbox-exec", "-p", "(deny default)", "zsh", "-lc", "echo hi"],
-      expected: "echo hi",
+      expected: process.platform === "darwin" ? "echo hi" : null,
     },
     {
       argv: ["/usr/bin/timeout", "--signal=TERM", "5", "zsh", "-lc", "echo hi"],

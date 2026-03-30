@@ -482,7 +482,7 @@ $0 \\"$1\\"" touch {marker}`,
   });
 
   it("unwraps caffeinate wrappers and persists the inner executable instead", () => {
-    if (process.platform === "win32") {
+    if (process.platform !== "darwin") {
       return;
     }
     const dir = makeTempDir();
@@ -510,7 +510,7 @@ $0 \\"$1\\"" touch {marker}`,
   });
 
   it("unwraps sandbox-exec wrappers and persists the inner executable instead", () => {
-    if (process.platform === "win32") {
+    if (process.platform !== "darwin") {
       return;
     }
     const dir = makeTempDir();
@@ -679,7 +679,7 @@ $0 \\"$1\\"" touch {marker}`,
   });
 
   it("prevents allow-always bypass for caffeinate wrapper chains", () => {
-    if (process.platform === "win32") {
+    if (process.platform !== "darwin") {
       return;
     }
     const dir = makeTempDir();
@@ -696,7 +696,7 @@ $0 \\"$1\\"" touch {marker}`,
   });
 
   it("prevents allow-always bypass for sandbox-exec wrapper chains", () => {
-    if (process.platform === "win32") {
+    if (process.platform !== "darwin") {
       return;
     }
     const dir = makeTempDir();
