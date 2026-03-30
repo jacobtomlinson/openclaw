@@ -231,14 +231,14 @@ function unwrapCaffeinateInvocation(argv: string[]): string[] | null {
   return scanWrapperInvocation(argv, {
     separators: new Set(["--"]),
     onToken: (token, lower) => {
-      if (!lower.startsWith("-") || lower === "-") {
+      if (!token.startsWith("-") || token === "-") {
         return "stop";
       }
-      if (lower.startsWith("--")) {
+      if (token.startsWith("--")) {
         return "invalid";
       }
-      for (let idx = 1; idx < lower.length; idx += 1) {
-        const flag = lower[idx];
+      for (let idx = 1; idx < token.length; idx += 1) {
+        const flag = token[idx];
         if (!flag) {
           break;
         }
@@ -268,7 +268,8 @@ function unwrapNohupInvocation(argv: string[]): string[] | null {
 }
 
 function unwrapSandboxExecInvocation(argv: string[]): string[] | null {
-  return scanWrapperInvocation(argv, {
+  let sawProfileSource = false;
+  const unwrapped = scanWrapperInvocation(argv, {
     separators: new Set(["--"]),
     onToken: (token, lower) => {
       if (!token.startsWith("-") || token === "-") {
@@ -279,15 +280,22 @@ function unwrapSandboxExecInvocation(argv: string[]): string[] | null {
       }
       for (const flag of SANDBOX_EXEC_OPTIONS_WITH_VALUE) {
         if (token === flag) {
+          if (flag !== "-D") {
+            sawProfileSource = true;
+          }
           return "consume-next";
         }
         if (token.startsWith(flag)) {
+          if (flag !== "-D") {
+            sawProfileSource = true;
+          }
           return "continue";
         }
       }
       return "invalid";
     },
   });
+  return sawProfileSource ? unwrapped : null;
 }
 
 function unwrapStdbufInvocation(argv: string[]): string[] | null {

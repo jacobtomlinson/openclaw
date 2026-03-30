@@ -192,8 +192,20 @@ describe("unwrapKnownDispatchWrapperInvocation", () => {
       expected: { kind: "blocked", wrapper: "caffeinate" },
     },
     {
+      argv: ["caffeinate", "-D", "bash", "-lc", "echo hi"],
+      expected: { kind: "blocked", wrapper: "caffeinate" },
+    },
+    {
       argv: ["script", "-q", "/dev/null"],
       expected: { kind: "blocked", wrapper: "script" },
+    },
+    {
+      argv: ["sandbox-exec", "bash", "-lc", "echo hi"],
+      expected: { kind: "blocked", wrapper: "sandbox-exec" },
+    },
+    {
+      argv: ["sandbox-exec", "-DHOME=/tmp/openclaw", "bash", "-lc", "echo hi"],
+      expected: { kind: "blocked", wrapper: "sandbox-exec" },
     },
     {
       argv: ["sandbox-exec", "-p"],
