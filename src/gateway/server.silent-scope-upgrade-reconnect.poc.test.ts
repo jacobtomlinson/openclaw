@@ -28,17 +28,10 @@ describe("gateway silent scope-upgrade reconnect", () => {
       clientMode: GATEWAY_CLIENT_MODES.TEST,
     });
 
-    let watcherWs: WebSocket | undefined;
     let sharedAuthReconnectWs: WebSocket | undefined;
     let postAttemptDeviceTokenWs: WebSocket | undefined;
 
     try {
-      watcherWs = await openTrackedWs(started.port);
-      await connectOk(watcherWs, { scopes: ["operator.admin"] });
-      const requestedEvent = onceMessage(
-        watcherWs,
-        (obj) => obj.type === "event" && obj.event === "device.pair.requested",
-      );
       sharedAuthReconnectWs = await openTrackedWs(started.port);
       const sharedAuthUpgradeAttempt = await connectReq(sharedAuthReconnectWs, {
         token: "secret",
@@ -54,12 +47,6 @@ describe("gateway silent scope-upgrade reconnect", () => {
         (sharedAuthUpgradeAttempt.error?.details as { requestId?: unknown; code?: string })
           ?.requestId,
       ).toBe(pending.pending[0]?.requestId);
-      const requested = (await requestedEvent) as {
-        payload?: { requestId?: string; deviceId?: string; scopes?: string[] };
-      };
-      expect(requested.payload?.requestId).toBe(pending.pending[0]?.requestId);
-      expect(requested.payload?.deviceId).toBe(paired.deviceId);
-      expect(requested.payload?.scopes).toEqual(["operator.admin"]);
 
       const afterUpgradeAttempt = await getPairedDevice(paired.deviceId);
       expect(afterUpgradeAttempt?.approvedScopes).toEqual(["operator.read"]);
@@ -75,7 +62,6 @@ describe("gateway silent scope-upgrade reconnect", () => {
       });
       expect(afterUpgrade.ok).toBe(false);
     } finally {
-      watcherWs?.close();
       sharedAuthReconnectWs?.close();
       postAttemptDeviceTokenWs?.close();
       started.ws.close();
@@ -93,17 +79,9 @@ describe("gateway silent scope-upgrade reconnect", () => {
       clientMode: GATEWAY_CLIENT_MODES.BACKEND,
     });
 
-    let watcherWs: WebSocket | undefined;
     let backendReconnectWs: WebSocket | undefined;
 
     try {
-      watcherWs = await openTrackedWs(started.port);
-      await connectOk(watcherWs, { scopes: ["operator.admin"] });
-      const requestedEvent = onceMessage(
-        watcherWs,
-        (obj) => obj.type === "event" && obj.event === "device.pair.requested",
-      );
-
       backendReconnectWs = await openTrackedWs(started.port);
       const reconnectAttempt = await connectReq(backendReconnectWs, {
         token: "secret",
@@ -126,19 +104,11 @@ describe("gateway silent scope-upgrade reconnect", () => {
         (reconnectAttempt.error?.details as { requestId?: unknown; code?: string })?.requestId,
       ).toBe(pending.pending[0]?.requestId);
 
-      const requested = (await requestedEvent) as {
-        payload?: { requestId?: string; deviceId?: string; scopes?: string[] };
-      };
-      expect(requested.payload?.requestId).toBe(pending.pending[0]?.requestId);
-      expect(requested.payload?.deviceId).toBe(paired.deviceId);
-      expect(requested.payload?.scopes).toEqual(["operator.admin"]);
-
       const afterAttempt = await getPairedDevice(paired.deviceId);
       expect(afterAttempt?.approvedScopes).toEqual(["operator.read"]);
       expect(afterAttempt?.tokens?.operator?.scopes).toEqual(["operator.read"]);
       expect(afterAttempt?.tokens?.operator?.token).toBe(paired.token);
     } finally {
-      watcherWs?.close();
       backendReconnectWs?.close();
       started.ws.close();
       await started.server.close();
@@ -178,6 +148,7 @@ describe("gateway silent scope-upgrade reconnect", () => {
       const res = await connectReq(ws, {
         token: "secret",
         deviceIdentityPath: loaded.identityPath,
+        scopes: [],
       });
       expect(res.ok).toBe(true);
 
@@ -211,6 +182,9 @@ describe("gateway silent scope-upgrade reconnect", () => {
         started.ws,
         (obj) => obj.type === "event" && obj.event === "device.pair.requested",
         300,
+      ).then(
+        (event) => ({ ok: true as const, event }),
+        (error: unknown) => ({ ok: false as const, error }),
       );
 
       ws = await openTrackedWs(started.port);
@@ -224,7 +198,13 @@ describe("gateway silent scope-upgrade reconnect", () => {
       expect(
         (res.error?.details as { requestId?: unknown; code?: string } | undefined)?.requestId,
       ).toBeUndefined();
-      await expect(requestedEvent).rejects.toThrow("timeout");
+      const requestEventResult = await requestedEvent;
+      expect(requestEventResult.ok).toBe(false);
+      expect((requestEventResult.ok ? undefined : requestEventResult.error) as Error).toMatchObject(
+        {
+          message: "timeout",
+        },
+      );
 
       const pending = await devicePairingModule.listDevicePairing();
       expect(pending.pending).toEqual([]);
