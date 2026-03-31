@@ -89,6 +89,9 @@ enum GatewayDiscoveryTrustSupport {
             guard let target = GatewayDiscoveryHelpers.sshTarget(for: gateway),
                   let parsed = CommandResolver.parseSSHTarget(target)
             else {
+                deps.showSelectionFailure(
+                    "Gateway selection failed",
+                    "OpenClaw could not resolve an SSH target for \(gateway.displayName).")
                 return false
             }
             return deps.confirmSSHSelection(SSHSelectionPrompt(
