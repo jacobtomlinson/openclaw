@@ -22,7 +22,7 @@ enum GatewayTLSPinningSupport {
 
     static func pinnedSessionBox(url: URL) -> WebSocketSessionBox? {
         guard let storeKey = self.storeKey(url: url),
-              let fingerprint = GatewayTLSStore.loadFingerprint(stableID: storeKey)
+              let fingerprint = self.pinnedFingerprint(url: url)
         else {
             return nil
         }
@@ -32,6 +32,13 @@ enum GatewayTLSPinningSupport {
             allowTOFU: false,
             storeKey: storeKey)
         return WebSocketSessionBox(session: GatewayTLSPinningSession(params: params))
+    }
+
+    static func pinnedFingerprint(url: URL) -> String? {
+        guard let storeKey = self.storeKey(url: url) else {
+            return nil
+        }
+        return GatewayTLSStore.loadFingerprint(stableID: storeKey)
     }
 }
 

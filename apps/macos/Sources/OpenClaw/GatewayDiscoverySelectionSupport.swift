@@ -17,6 +17,9 @@ enum GatewayDiscoverySelectionSupport {
         else {
             return false
         }
+        guard !Task.isCancelled else {
+            return false
+        }
         if preferredTransport != state.remoteTransport {
             state.remoteTransport = preferredTransport
         }

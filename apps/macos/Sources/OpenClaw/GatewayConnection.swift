@@ -106,6 +106,7 @@ actor GatewayConnection {
     private var configuredURL: URL?
     private var configuredToken: String?
     private var configuredPassword: String?
+    private var configuredTLSPin: String?
 
     private var subscribers: [UUID: AsyncStream<GatewayPush>.Continuation] = [:]
     private var lastSnapshot: HelloOk?
@@ -306,6 +307,8 @@ actor GatewayConnection {
         self.client = nil
         self.configuredURL = nil
         self.configuredToken = nil
+        self.configuredPassword = nil
+        self.configuredTLSPin = nil
         self.lastSnapshot = nil
     }
 
@@ -394,8 +397,11 @@ actor GatewayConnection {
     }
 
     private func configure(url: URL, token: String?, password: String?) async {
+        let pinnedFingerprint = self.sessionBox == nil
+            ? GatewayTLSPinningSupport.pinnedFingerprint(url: url)
+            : nil
         if self.client != nil, self.configuredURL == url, self.configuredToken == token,
-           self.configuredPassword == password
+           self.configuredPassword == password, self.configuredTLSPin == pinnedFingerprint
         {
             return
         }
@@ -415,6 +421,7 @@ actor GatewayConnection {
         self.configuredURL = url
         self.configuredToken = token
         self.configuredPassword = password
+        self.configuredTLSPin = pinnedFingerprint
     }
 
     private func handle(push: GatewayPush) {

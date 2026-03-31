@@ -6,6 +6,8 @@ import SwiftUI
 
 extension OnboardingView {
     func selectLocalGateway() {
+        self.remoteSelectionTask?.cancel()
+        self.remoteSelectionTask = nil
         self.state.connectionMode = .local
         self.preferredGatewayID = nil
         self.showAdvancedConnection = false
@@ -13,6 +15,8 @@ extension OnboardingView {
     }
 
     func selectUnconfiguredGateway() {
+        self.remoteSelectionTask?.cancel()
+        self.remoteSelectionTask = nil
         Task { await self.onboardingWizard.cancelIfRunning() }
         self.state.connectionMode = .unconfigured
         self.preferredGatewayID = nil
@@ -21,9 +25,13 @@ extension OnboardingView {
     }
 
     func selectRemoteGateway(_ gateway: GatewayDiscoveryModel.DiscoveredGateway) {
-        Task { @MainActor in
+        self.remoteSelectionTask?.cancel()
+        self.remoteSelectionTask = Task { @MainActor in
             await self.onboardingWizard.cancelIfRunning()
             guard await GatewayDiscoverySelectionSupport.applyRemoteSelection(gateway: gateway, state: self.state) else {
+                return
+            }
+            guard !Task.isCancelled else {
                 return
             }
             self.preferredGatewayID = gateway.stableID

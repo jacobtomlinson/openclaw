@@ -15,6 +15,7 @@ struct GeneralSettings: View {
     @State private var gatewayStatus: GatewayEnvironmentStatus = .checking
     @State private var remoteStatus: RemoteStatus = .idle
     @State private var showRemoteAdvanced = false
+    @State private var applyDiscoveredGatewayTask: Task<Void, Never>?
     private let isPreview = ProcessInfo.processInfo.isPreview
     private var isNixMode: Bool {
         ProcessInfo.processInfo.isNixMode
@@ -91,6 +92,12 @@ struct GeneralSettings: View {
         .onChange(of: self.state.canvasEnabled) { _, enabled in
             if !enabled {
                 CanvasManager.shared.hideAll()
+            }
+        }
+        .onChange(of: self.state.connectionMode) { _, mode in
+            if mode != .remote {
+                self.applyDiscoveredGatewayTask?.cancel()
+                self.applyDiscoveredGatewayTask = nil
             }
         }
     }
@@ -598,8 +605,12 @@ extension GeneralSettings {
     }
 
     private func applyDiscoveredGateway(_ gateway: GatewayDiscoveryModel.DiscoveredGateway) {
-        Task { @MainActor in
+        self.applyDiscoveredGatewayTask?.cancel()
+        self.applyDiscoveredGatewayTask = Task { @MainActor in
             guard await GatewayDiscoverySelectionSupport.applyRemoteSelection(gateway: gateway, state: self.state) else {
+                return
+            }
+            guard !Task.isCancelled else {
                 return
             }
             MacNodeModeCoordinator.shared.setPreferredGatewayStableID(gateway.stableID)

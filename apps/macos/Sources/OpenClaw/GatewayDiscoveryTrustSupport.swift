@@ -38,13 +38,22 @@ enum GatewayDiscoveryTrustSupport {
             confirmDirectSelection: { params in
                 let alert = NSAlert()
                 alert.alertStyle = .warning
-                alert.messageText = "Trust discovered gateway certificate?"
-                alert.informativeText = """
-                "\(params.gatewayName)" resolves to \(params.host):\(params.port) over local network discovery.
+                alert.messageText = params.replacesExistingTrust
+                    ? "Replace discovered gateway certificate trust?"
+                    : "Trust discovered gateway certificate?"
+                alert.informativeText = params.replacesExistingTrust
+                    ? """
+                    "\(params.gatewayName)" at \(params.host):\(params.port) now presents a different SHA-256 TLS fingerprint.
 
-                Verify this SHA-256 TLS fingerprint on the gateway host before trusting it. OpenClaw will pin it for future direct connections:
-                \(params.fingerprint)
-                """
+                    Verify this new fingerprint on the gateway host before replacing the pin OpenClaw already saved for future direct connections:
+                    \(params.fingerprint)
+                    """
+                    : """
+                    "\(params.gatewayName)" resolves to \(params.host):\(params.port) over local network discovery.
+
+                    Verify this SHA-256 TLS fingerprint on the gateway host before trusting it. OpenClaw will pin it for future direct connections:
+                    \(params.fingerprint)
+                    """
                 alert.addButton(withTitle: "Trust Gateway")
                 alert.addButton(withTitle: "Cancel")
                 return alert.runModal() == .alertFirstButtonReturn
@@ -77,6 +86,7 @@ enum GatewayDiscoveryTrustSupport {
         let host: String
         let port: Int
         let fingerprint: String
+        let replacesExistingTrust: Bool
     }
 
     static func confirmSelection(
@@ -121,20 +131,22 @@ enum GatewayDiscoveryTrustSupport {
                     "OpenClaw could not resolve a TLS pinning key for \(gateway.displayName).")
                 return false
             }
-            if deps.loadTLSFingerprint(storeKey) != nil {
-                return true
-            }
+            let existingFingerprint = deps.loadTLSFingerprint(storeKey)
             guard let fingerprint = await deps.probeTLSFingerprint(url) else {
                 deps.showSelectionFailure(
                     "Gateway certificate check failed",
                     "OpenClaw could not read the TLS fingerprint for \(endpoint.host):\(endpoint.port). Try again after verifying the gateway is reachable.")
                 return false
             }
+            if existingFingerprint == fingerprint {
+                return true
+            }
             guard deps.confirmDirectSelection(DirectSelectionPrompt(
                 gatewayName: gateway.displayName,
                 host: endpoint.host,
                 port: endpoint.port,
-                fingerprint: fingerprint))
+                fingerprint: fingerprint,
+                replacesExistingTrust: existingFingerprint != nil))
             else {
                 return false
             }

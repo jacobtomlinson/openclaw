@@ -208,7 +208,8 @@ struct GatewayDiscoverySelectionSupportTests {
                     stableID: "tailscale-serve|\(tailnetHost)"),
                 state: state,
                 deps: self.makeDeps(
-                    fingerprint: nil,
+                    fingerprint: "stored-pin",
+                    confirmDirectSelection: false,
                     existingFingerprint: "stored-pin",
                     recordedSaves: recordedSaves))
 
@@ -216,6 +217,35 @@ struct GatewayDiscoverySelectionSupportTests {
             #expect(state.remoteTransport == .direct)
             #expect(state.remoteUrl == "wss://\(tailnetHost)")
             #expect(recordedSaves.saves.isEmpty)
+        }
+    }
+
+    @Test func `selecting discovered direct gateway replaces stale pinned fingerprint after confirmation`() async {
+        let tailnetHost = "gateway-host.tailnet-example.ts.net"
+        let recordedSaves = RecordedSaveBox()
+        let configPath = TestIsolation.tempConfigPath()
+        await TestIsolation.withEnvValues(["OPENCLAW_CONFIG_PATH": configPath]) {
+            let state = AppState(preview: true)
+            state.remoteTransport = .ssh
+
+            let applied = await GatewayDiscoverySelectionSupport.applyRemoteSelection(
+                gateway: self.makeGateway(
+                    serviceHost: tailnetHost,
+                    servicePort: 443,
+                    tailnetDns: tailnetHost,
+                    stableID: "tailscale-serve|\(tailnetHost)"),
+                state: state,
+                deps: self.makeDeps(
+                    fingerprint: "new-pin",
+                    existingFingerprint: "old-pin",
+                    recordedSaves: recordedSaves))
+
+            #expect(applied)
+            #expect(state.remoteTransport == .direct)
+            #expect(state.remoteUrl == "wss://\(tailnetHost)")
+            #expect(recordedSaves.saves == [
+                RecordedSave(storeKey: "\(tailnetHost):443", fingerprint: "new-pin"),
+            ])
         }
     }
 }
