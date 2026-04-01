@@ -299,4 +299,72 @@ struct GatewayDiscoverySelectionSupportTests {
         #expect(!didPrompt.value)
         #expect(recordedSaves.saves.isEmpty)
     }
+
+    @Test func `canceling ssh trust before prompt skips stale modal`() async {
+        let didPrompt = FlagBox()
+        let gateway = self.makeGateway(
+            serviceHost: "nearby-gateway.local",
+            servicePort: 18789,
+            stableID: "bonjour|nearby-gateway")
+
+        let task = Task {
+            await Task.yield()
+            return await GatewayDiscoveryTrustSupport.confirmSelection(
+                gateway: gateway,
+                transport: .ssh,
+                deps: GatewayDiscoveryTrustSupport.Deps(
+                    confirmSSHSelection: { _ in
+                        didPrompt.value = true
+                        return true
+                    },
+                    probeTLSFingerprint: { _ in nil },
+                    confirmDirectSelection: { _ in true },
+                    saveTLSFingerprint: { _, _ in },
+                    loadTLSFingerprint: { _ in nil },
+                    showSelectionFailure: { _, _ in }))
+        }
+
+        task.cancel()
+        let confirmed = await task.value
+
+        #expect(!confirmed)
+        #expect(!didPrompt.value)
+    }
+
+    @Test func `canceling direct trust before failed probe skips stale failure alert`() async {
+        let didShowFailure = FlagBox()
+        let continuationBox = ProbeContinuationBox()
+        let gateway = self.makeGateway(
+            serviceHost: "gateway-host.tailnet-example.ts.net",
+            servicePort: 443,
+            tailnetDns: "gateway-host.tailnet-example.ts.net",
+            stableID: "tailscale-serve|gateway-host.tailnet-example.ts.net")
+
+        let task = Task {
+            await GatewayDiscoveryTrustSupport.confirmSelection(
+                gateway: gateway,
+                transport: .direct,
+                deps: GatewayDiscoveryTrustSupport.Deps(
+                    confirmSSHSelection: { _ in true },
+                    probeTLSFingerprint: { _ in
+                        await withCheckedContinuation { continuation in
+                            continuationBox.continuation = continuation
+                        }
+                    },
+                    confirmDirectSelection: { _ in true },
+                    saveTLSFingerprint: { _, _ in },
+                    loadTLSFingerprint: { _ in nil },
+                    showSelectionFailure: { _, _ in
+                        didShowFailure.value = true
+                    }))
+        }
+
+        await Task.yield()
+        task.cancel()
+        continuationBox.continuation?.resume(returning: nil)
+        let confirmed = await task.value
+
+        #expect(!confirmed)
+        #expect(!didShowFailure.value)
+    }
 }

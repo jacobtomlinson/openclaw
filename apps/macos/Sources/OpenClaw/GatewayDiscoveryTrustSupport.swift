@@ -104,6 +104,9 @@ enum GatewayDiscoveryTrustSupport {
                     "OpenClaw could not resolve an SSH target for \(gateway.displayName).")
                 return false
             }
+            guard !Task.isCancelled else {
+                return false
+            }
             return deps.confirmSSHSelection(SSHSelectionPrompt(
                 gatewayName: gateway.displayName,
                 target: target,
@@ -132,13 +135,14 @@ enum GatewayDiscoveryTrustSupport {
                 return false
             }
             let existingFingerprint = deps.loadTLSFingerprint(storeKey)
-            guard let fingerprint = await deps.probeTLSFingerprint(url) else {
+            let fingerprint = await deps.probeTLSFingerprint(url)
+            guard !Task.isCancelled else {
+                return false
+            }
+            guard let fingerprint else {
                 deps.showSelectionFailure(
                     "Gateway certificate check failed",
                     "OpenClaw could not read the TLS fingerprint for \(endpoint.host):\(endpoint.port). Try again after verifying the gateway is reachable.")
-                return false
-            }
-            guard !Task.isCancelled else {
                 return false
             }
             if existingFingerprint == fingerprint {
