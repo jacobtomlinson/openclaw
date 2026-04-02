@@ -42,7 +42,6 @@ enum GatewayTLSPinningSupport {
     }
 }
 
-// URLSession delegate callbacks cross concurrency domains; ProbeState is synchronized by the unfair lock.
 final class GatewayTLSFingerprintProbe: NSObject, URLSessionDelegate, @unchecked Sendable {
     private struct ProbeState {
         var didFinish = false
@@ -96,7 +95,8 @@ final class GatewayTLSFingerprintProbe: NSObject, URLSessionDelegate, @unchecked
     }
 
     private func finish(_ fingerprint: String?) {
-        let (shouldComplete, taskToCancel, sessionToInvalidate) = self.state.withLock { state -> (Bool, URLSessionWebSocketTask?, URLSession?) in
+        let (shouldComplete, taskToCancel, sessionToInvalidate) = self.state.withLock { state ->
+            (Bool, URLSessionWebSocketTask?, URLSession?) in
             guard !state.didFinish else { return (false, nil, nil) }
             state.didFinish = true
             let task = state.task

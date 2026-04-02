@@ -619,7 +619,10 @@ extension GeneralSettings {
     private func applyDiscoveredGateway(_ gateway: GatewayDiscoveryModel.DiscoveredGateway) {
         self.applyDiscoveredGatewayTask?.cancel()
         self.applyDiscoveredGatewayTask = Task { @MainActor in
-            guard await GatewayDiscoverySelectionSupport.applyRemoteSelection(gateway: gateway, state: self.state) else {
+            guard await GatewayDiscoverySelectionSupport.applyRemoteSelection(
+                gateway: gateway,
+                state: self.state)
+            else {
                 return
             }
             guard !Task.isCancelled else {

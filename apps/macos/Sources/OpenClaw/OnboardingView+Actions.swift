@@ -28,7 +28,10 @@ extension OnboardingView {
         self.remoteSelectionTask?.cancel()
         self.remoteSelectionTask = Task { @MainActor in
             await self.onboardingWizard.cancelIfRunning()
-            guard await GatewayDiscoverySelectionSupport.applyRemoteSelection(gateway: gateway, state: self.state) else {
+            guard await GatewayDiscoverySelectionSupport.applyRemoteSelection(
+                gateway: gateway,
+                state: self.state)
+            else {
                 return
             }
             guard !Task.isCancelled else {

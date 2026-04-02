@@ -21,7 +21,9 @@ enum GatewayDiscoveryTrustSupport {
                 alert.informativeText = """
                 "\(params.gatewayName)" resolves to \(params.host):\(params.port) over local network discovery.
 
-                OpenClaw will save this SSH target as \(params.target). The connection will only work if this host key is already trusted in your local SSH configuration.
+                OpenClaw will save this SSH target as \(params.target).
+                The connection will only work if this host key is already trusted in your local SSH
+                configuration.
                 """
                 alert.addButton(withTitle: "Use Gateway")
                 alert.addButton(withTitle: "Cancel")
@@ -51,7 +53,8 @@ enum GatewayDiscoveryTrustSupport {
                     : """
                     "\(params.gatewayName)" resolves to \(params.host):\(params.port) over local network discovery.
 
-                    Verify this SHA-256 TLS fingerprint on the gateway host before trusting it. OpenClaw will pin it for future direct connections:
+                    Verify this SHA-256 TLS fingerprint on the gateway host before trusting it.
+                    OpenClaw will pin it for future direct connections:
                     \(params.fingerprint)
                     """
                 alert.addButton(withTitle: "Trust Gateway")
@@ -74,14 +77,14 @@ enum GatewayDiscoveryTrustSupport {
             })
     }
 
-    struct SSHSelectionPrompt: Equatable, Sendable {
+    struct SSHSelectionPrompt: Equatable {
         let gatewayName: String
         let target: String
         let host: String
         let port: Int
     }
 
-    struct DirectSelectionPrompt: Equatable, Sendable {
+    struct DirectSelectionPrompt: Equatable {
         let gatewayName: String
         let host: String
         let port: Int
@@ -142,7 +145,10 @@ enum GatewayDiscoveryTrustSupport {
             guard let fingerprint else {
                 deps.showSelectionFailure(
                     "Gateway certificate check failed",
-                    "OpenClaw could not read the TLS fingerprint for \(endpoint.host):\(endpoint.port). Try again after verifying the gateway is reachable.")
+                    """
+                    OpenClaw could not read the TLS fingerprint for \(endpoint.host):\(endpoint.port).
+                    Try again after verifying the gateway is reachable.
+                    """)
                 return false
             }
             if existingFingerprint == fingerprint {
