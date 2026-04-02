@@ -58,7 +58,7 @@ struct GatewayDiscoverySelectionSupportTests {
             saveTLSFingerprint: { storeKey, savedFingerprint in
                 recordedSaves.saves.append(RecordedSave(storeKey: storeKey, fingerprint: savedFingerprint))
             },
-            loadTLSFingerprint: { _ in existingFingerprint },
+            loadPinnedTLSFingerprint: { _ in existingFingerprint },
             showSelectionFailure: { _, _ in })
     }
 
@@ -228,6 +228,42 @@ struct GatewayDiscoverySelectionSupportTests {
         }
     }
 
+    @Test func `selecting discovered direct gateway skips prompt when migrated pin lookup already trusts url`() async {
+        let tailnetHost = "gateway-host.tailnet-example.ts.net"
+        let recordedSaves = RecordedSaveBox()
+        let didPrompt = FlagBox()
+
+        let confirmed = await GatewayDiscoveryTrustSupport.confirmSelection(
+            gateway: self.makeGateway(
+                serviceHost: tailnetHost,
+                servicePort: 443,
+                tailnetDns: tailnetHost,
+                stableID: "tailscale-serve|\(tailnetHost)"),
+            transport: .direct,
+            deps: GatewayDiscoveryTrustSupport.Deps(
+                confirmSSHSelection: { _ in true },
+                probeTLSFingerprint: { url in
+                    #expect(url.absoluteString == "wss://\(tailnetHost)")
+                    return "migrated-pin"
+                },
+                confirmDirectSelection: { _ in
+                    didPrompt.value = true
+                    return false
+                },
+                saveTLSFingerprint: { storeKey, savedFingerprint in
+                    recordedSaves.saves.append(RecordedSave(storeKey: storeKey, fingerprint: savedFingerprint))
+                },
+                loadPinnedTLSFingerprint: { url in
+                    #expect(url.absoluteString == "wss://\(tailnetHost)")
+                    return "migrated-pin"
+                },
+                showSelectionFailure: { _, _ in }))
+
+        #expect(confirmed)
+        #expect(!didPrompt.value)
+        #expect(recordedSaves.saves.isEmpty)
+    }
+
     @Test func `selecting discovered direct gateway replaces stale pinned fingerprint after confirmation`() async {
         let tailnetHost = "gateway-host.tailnet-example.ts.net"
         let recordedSaves = RecordedSaveBox()
@@ -286,7 +322,7 @@ struct GatewayDiscoverySelectionSupportTests {
                     saveTLSFingerprint: { storeKey, savedFingerprint in
                         recordedSaves.saves.append(RecordedSave(storeKey: storeKey, fingerprint: savedFingerprint))
                     },
-                    loadTLSFingerprint: { _ in nil },
+                    loadPinnedTLSFingerprint: { _ in nil },
                     showSelectionFailure: { _, _ in }))
         }
 
@@ -320,7 +356,7 @@ struct GatewayDiscoverySelectionSupportTests {
                     probeTLSFingerprint: { _ in nil },
                     confirmDirectSelection: { _ in true },
                     saveTLSFingerprint: { _, _ in },
-                    loadTLSFingerprint: { _ in nil },
+                    loadPinnedTLSFingerprint: { _ in nil },
                     showSelectionFailure: { _, _ in }))
         }
 
@@ -353,7 +389,7 @@ struct GatewayDiscoverySelectionSupportTests {
                     },
                     confirmDirectSelection: { _ in true },
                     saveTLSFingerprint: { _, _ in },
-                    loadTLSFingerprint: { _ in nil },
+                    loadPinnedTLSFingerprint: { _ in nil },
                     showSelectionFailure: { _, _ in
                         didShowFailure.value = true
                     }))

@@ -10,7 +10,7 @@ enum GatewayDiscoveryTrustSupport {
         var probeTLSFingerprint: @Sendable (_ url: URL) async -> String?
         var confirmDirectSelection: @MainActor @Sendable (_ params: DirectSelectionPrompt) -> Bool
         var saveTLSFingerprint: @Sendable (_ storeKey: String, _ fingerprint: String) -> Void
-        var loadTLSFingerprint: @Sendable (_ storeKey: String) -> String?
+        var loadPinnedTLSFingerprint: @Sendable (_ url: URL) -> String?
         var showSelectionFailure: @MainActor @Sendable (_ title: String, _ message: String) -> Void
 
         static let live = Deps(
@@ -64,8 +64,8 @@ enum GatewayDiscoveryTrustSupport {
             saveTLSFingerprint: { storeKey, fingerprint in
                 GatewayTLSStore.saveFingerprint(fingerprint, stableID: storeKey)
             },
-            loadTLSFingerprint: { storeKey in
-                GatewayTLSStore.loadFingerprint(stableID: storeKey)
+            loadPinnedTLSFingerprint: { url in
+                GatewayTLSPinningSupport.pinnedFingerprint(url: url)
             },
             showSelectionFailure: { title, message in
                 let alert = NSAlert()
@@ -137,7 +137,7 @@ enum GatewayDiscoveryTrustSupport {
                     "OpenClaw could not resolve a TLS pinning key for \(gateway.displayName).")
                 return false
             }
-            let existingFingerprint = deps.loadTLSFingerprint(storeKey)
+            let existingFingerprint = deps.loadPinnedTLSFingerprint(url)
             let fingerprint = await deps.probeTLSFingerprint(url)
             guard !Task.isCancelled else {
                 return false
