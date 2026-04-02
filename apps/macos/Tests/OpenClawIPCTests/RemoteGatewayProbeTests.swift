@@ -20,7 +20,7 @@ struct RemoteGatewayProbeTests {
             target: "user@gateway.example.com:2222")
 
         #expect(failure.contains("not trusted yet"))
-        #expect(failure.contains("`ssh gateway.example.com`"))
+        #expect(failure.contains("`ssh -p 2222 gateway.example.com`"))
         #expect(!failure.contains("ssh-keygen -R"))
     }
 
@@ -40,6 +40,6 @@ struct RemoteGatewayProbeTests {
             response,
             target: "user@gateway.example.com:2222")
 
-        #expect(failure.contains("ssh-keygen -R gateway.example.com"))
+        #expect(failure.contains("ssh-keygen -R [gateway.example.com]:2222"))
     }
 }

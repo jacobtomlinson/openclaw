@@ -217,18 +217,25 @@ enum RemoteGatewayProbe {
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .split(whereSeparator: \.isNewline)
             .joined(separator: " ")
-        let host = CommandResolver.parseSSHTarget(target)?.host ?? target
+        let parsedTarget = CommandResolver.parseSSHTarget(target)
+        let host = parsedTarget?.host ?? target
         if let trimmed {
             if self.isUnknownSSHHostFailure(trimmed) {
+                let trustCommand = self.sshTrustBootstrapCommand(
+                    for: parsedTarget,
+                    fallbackHost: host)
                 return """
                 SSH check failed: This SSH host is not trusted yet.
-                Verify the host key with `ssh \(host)` in Terminal, then try again.
+                Verify the host key with \(trustCommand) in Terminal, then try again.
                 """
             }
             if trimmed.localizedCaseInsensitiveContains("host key verification failed") {
+                let removalCommand = self.sshKnownHostRemovalCommand(
+                    for: parsedTarget,
+                    fallbackHost: host)
                 return """
                 SSH check failed: Host key verification failed.
-                Remove the old key with `ssh-keygen -R \(host)` and try again.
+                Remove the old key with \(removalCommand) and try again.
                 """
             }
         }
@@ -250,6 +257,30 @@ enum RemoteGatewayProbe {
             normalized.contains("host key is not known") ||
             normalized.contains("the authenticity of host") ||
             normalized.contains("not in the list of known hosts")
+    }
+
+    private static func sshTrustBootstrapCommand(
+        for target: CommandResolver.SSHParsedTarget?,
+        fallbackHost: String) -> String
+    {
+        guard let target else {
+            return "`ssh \(fallbackHost)`"
+        }
+        guard target.port != 22 else {
+            return "`ssh \(target.host)`"
+        }
+        return "`ssh -p \(target.port) \(target.host)`"
+    }
+
+    private static func sshKnownHostRemovalCommand(
+        for target: CommandResolver.SSHParsedTarget?,
+        fallbackHost: String) -> String
+    {
+        guard let target else {
+            return "`ssh-keygen -R \(fallbackHost)`"
+        }
+        let knownHost = target.port == 22 ? target.host : "[\(target.host)]:\(target.port)"
+        return "`ssh-keygen -R \(knownHost)`"
     }
 
     static func _testFormatSSHFailure(_ response: Response, target: String) -> String {
