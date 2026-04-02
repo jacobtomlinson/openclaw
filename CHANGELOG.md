@@ -58,6 +58,7 @@ Docs: https://docs.openclaw.ai
 - Browser/CDP: normalize trailing-dot localhost absolute-form hosts before loopback checks so remote CDP websocket URLs like `ws://localhost.:...` rewrite back to the configured remote host. (#59236) Thanks @mappel-nv.
 - Webhooks/secret comparison: replace ad-hoc timing-safe secret comparisons across BlueBubbles, Feishu, Mattermost, Telegram, Twilio, and Zalo webhook handlers with the shared `safeEqualSecret` helper and reject empty auth tokens in BlueBubbles. Thanks @eleqtrizit.
 - Zalo/webhook replay: scope replay dedupe key by chat and sender so reused message IDs across different chats or senders no longer collide, and harden metadata reads for partially missing payloads. (#58444)
+- OpenShell/mirror sync: constrain mirror sync to managed roots only so user-added shell roots are no longer overwritten or removed during config synchronization. (#58515)
 
 ## 2026.4.1-beta.1
 
