@@ -37,6 +37,7 @@ Docs: https://docs.openclaw.ai
 - Podman/launch: remove noisy container output from `scripts/run-openclaw-podman.sh` and align the Podman install guidance with the quieter startup flow. (#59368) Thanks @sallyom.
 - MS Teams/streaming: strip already-streamed text from fallback block delivery when replies exceed the 4000-character streaming limit so long responses stop duplicating content. (#59297) Thanks @bradgroux.
 - MS Teams/logging: format non-`Error` failures with the shared unknown-error helper so logs stop collapsing caught SDK or Axios objects into `[object Object]`. (#59321) Thanks @bradgroux.
+- Zalo/webhook replay: scope replay dedupe key by chat and sender so reused message IDs across different chats or senders no longer collide, and harden metadata reads for partially missing payloads. (#58444)
 
 ## 2026.4.1-beta.1
 
