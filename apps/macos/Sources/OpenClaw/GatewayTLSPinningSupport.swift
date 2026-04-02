@@ -4,6 +4,11 @@ import OpenClawKit
 import Security
 
 enum GatewayTLSPinningSupport {
+    private struct PinResolution {
+        let storeKey: String
+        let fingerprint: String?
+    }
+
     static func storeKey(host: String, port: Int) -> String? {
         guard let canonicalHost = self.canonicalHost(host), port > 0 else { return nil }
         return "\(canonicalHost):\(port)"
@@ -28,8 +33,8 @@ enum GatewayTLSPinningSupport {
     }
 
     static func pinnedSessionBox(url: URL) -> WebSocketSessionBox? {
-        guard let storeKey = self.storeKey(url: url),
-              let fingerprint = self.pinnedFingerprint(url: url)
+        guard let resolvedPin = self.resolvePin(url: url),
+              let fingerprint = resolvedPin.fingerprint
         else {
             return nil
         }
@@ -37,15 +42,66 @@ enum GatewayTLSPinningSupport {
             required: true,
             expectedFingerprint: fingerprint,
             allowTOFU: false,
-            storeKey: storeKey)
+            storeKey: resolvedPin.storeKey)
         return WebSocketSessionBox(session: GatewayTLSPinningSession(params: params))
     }
 
     static func pinnedFingerprint(url: URL) -> String? {
-        guard let storeKey = self.storeKey(url: url) else {
+        self.resolvePin(url: url)?.fingerprint
+    }
+
+    static func tlsParams(url: URL, allowTOFU: Bool) -> GatewayTLSParams? {
+        guard let resolvedPin = self.resolvePin(url: url) else {
             return nil
         }
-        return GatewayTLSStore.loadFingerprint(stableID: storeKey)
+        return GatewayTLSParams(
+            required: true,
+            expectedFingerprint: resolvedPin.fingerprint,
+            allowTOFU: allowTOFU && resolvedPin.fingerprint == nil,
+            storeKey: resolvedPin.storeKey)
+    }
+
+    private static func resolvePin(url: URL) -> PinResolution? {
+        guard url.scheme?.lowercased() == "wss",
+              let host = url.host
+        else {
+            return nil
+        }
+        return self.resolvePin(host: host, port: url.port ?? 443)
+    }
+
+    private static func resolvePin(host: String, port: Int) -> PinResolution? {
+        guard let storeKey = self.storeKey(host: host, port: port) else {
+            return nil
+        }
+        if let fingerprint = GatewayTLSStore.loadFingerprint(stableID: storeKey) {
+            return PinResolution(storeKey: storeKey, fingerprint: fingerprint)
+        }
+
+        for legacyStoreKey in self.legacyStoreKeys(host: host, port: port) {
+            guard let fingerprint = GatewayTLSStore.loadFingerprint(stableID: legacyStoreKey) else {
+                continue
+            }
+            GatewayTLSStore.saveFingerprint(fingerprint, stableID: storeKey)
+            if GatewayTLSStore.loadFingerprint(stableID: storeKey) == fingerprint {
+                _ = GatewayTLSStore.clearFingerprint(stableID: legacyStoreKey)
+            }
+            return PinResolution(storeKey: storeKey, fingerprint: fingerprint)
+        }
+
+        return PinResolution(storeKey: storeKey, fingerprint: nil)
+    }
+
+    private static func legacyStoreKeys(host: String, port: Int) -> [String] {
+        let legacyHost = host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !legacyHost.isEmpty, port > 0 else { return [] }
+        let legacyStoreKey = "\(legacyHost):\(port)"
+        guard let canonicalStoreKey = self.storeKey(host: host, port: port),
+              legacyStoreKey != canonicalStoreKey
+        else {
+            return []
+        }
+        return [legacyStoreKey]
     }
 }
 
