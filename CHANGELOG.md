@@ -56,6 +56,7 @@ Docs: https://docs.openclaw.ai
 - Gateway: prune empty `node-pending-work` state entries after explicit acknowledgments and natural expiry so the per-node state map no longer grows indefinitely. (#58179) Thanks @gavyngong.
 - Browser/CDP: normalize trailing-dot localhost absolute-form hosts before loopback checks so remote CDP websocket URLs like `ws://localhost.:...` rewrite back to the configured remote host. (#59236) Thanks @mappel-nv.
 - Webhooks/secret comparison: replace ad-hoc timing-safe secret comparisons across BlueBubbles, Feishu, Mattermost, Telegram, Twilio, and Zalo webhook handlers with the shared `safeEqualSecret` helper and reject empty auth tokens in BlueBubbles. Thanks @eleqtrizit.
+- Exec/host env: block `CARGO_REGISTRIES_*` and `YARN_RC_FILENAME` from request-scoped host exec env overrides so untrusted commands cannot steer Cargo registry resolution or Yarn config discovery. (#59233)
 
 ## 2026.4.1-beta.1
 
