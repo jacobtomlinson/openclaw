@@ -10546,6 +10546,8 @@ exit 1
     );
     expect(currentTargetBranch).not.toContain("swift_test_args+=(--parallel)");
     expect(currentTargetBranch).not.toContain("--no-parallel");
+    expect(currentTargetBranch).toContain("OPENCLAW_MACOS_GATEWAY_PAIRING_PROOF=1");
+    expect(currentTargetBranch).toContain("--filter GatewayDiscoveryPairingNativeProofTests");
     expect(testStep.run).toContain("swift_test_args+=(--no-parallel)");
 
     for (const buildExitCode of [0, 23]) {

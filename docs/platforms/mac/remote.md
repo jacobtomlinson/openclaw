@@ -261,13 +261,31 @@ To configure from the UI instead:
 1. Choose **Connection…** from the menu bar and select the **Connection** tab.
 2. Under **OpenClaw runs**, pick **Remote** and set:
    - **Transport**: **SSH tunnel** or **Direct (ws/wss)**.
-   - **SSH target**: `user@host` (optional `:port`). If the Gateway is on the same LAN and advertises Bonjour, pick it from the discovered list to auto-fill this field.
+   - **SSH target**: `user@host` (optional `:port`).
    - **Gateway URL** (Direct only): `wss://gateway.example.ts.net` (or `ws://...` for local/LAN).
    - **Identity file** (advanced): path to your key.
    - **Project root** (advanced): remote checkout path used for commands.
    - **CLI path** (advanced): optional path to a runnable `openclaw` entrypoint/binary (auto-filled when advertised).
 3. Hit **Test remote**. The app checks SSH reachability when applicable, then authenticates and calls the Gateway health RPC. Connection, authentication, and pairing errors appear here; this check does not require a CLI on this Mac.
 4. Health checks and WebChat now run through the selected transport automatically.
+
+For a Gateway shown in the nearby-discovery list, select it and paste a fresh
+full-access setup code from **Control UI -> Settings -> Devices -> Pair device**
+on that Gateway. The Mac verifies the code's TLS certificate
+pin before sending its short-lived bootstrap token, stores the resulting
+device-scoped credential, and then saves the direct `wss://` route. Bonjour
+advertisements alone never authorize a route or receive an existing Gateway
+token. A new Gateway identity requires a new setup code.
+
+Nearby setup-code pairing requires a Gateway release that supports the macOS
+full-access bootstrap handoff. Gateways at `v2026.9.3` or older do not provide
+that handoff: upgrade the Gateway first, or keep using an existing manually
+configured **Direct** or **SSH tunnel** route. A failed nearby pairing does not
+replace the saved route.
+
+App and Gateway releases do not need to match: saved routes, manual **Direct**,
+**SSH tunnel**, and local connections keep working across version skew. Only
+nearby setup-code pairing requires the newer Gateway.
 
 <a id="web-chat" />
 

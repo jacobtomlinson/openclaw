@@ -1,8 +1,8 @@
 import Foundation
 import OpenClawIPC
-import OpenClawKit
 import Testing
 @testable import OpenClaw
+@testable import OpenClawKit
 
 private actor CoordinatorInvokeLifecycleProbe {
     private var invokeStarted = false
@@ -62,6 +62,19 @@ private actor CoordinatorDrainSnapshotProbe {
 
     func hasCaptured() -> Bool {
         self.captured
+    }
+}
+
+private actor CoordinatorConnectAuthProbe {
+    private var auth: [String: String]?
+
+    func record(_ message: URLSessionWebSocketTask.Message) {
+        let params = GatewayWebSocketTestSupport.connectRequestParams(from: message)
+        self.auth = (params?["auth"] as? [String: Any])?.compactMapValues { $0 as? String }
+    }
+
+    func snapshot() -> [String: String]? {
+        self.auth
     }
 }
 
@@ -278,6 +291,92 @@ struct MacNodeModeCoordinatorTests {
         #expect(!MacNodeModeCoordinator.endpointAttemptIsCurrent(
             capturedGeneration: 7,
             currentGeneration: 8))
+    }
+
+    @Test func `node connect uses only the prepared endpoint credential owner`() async throws {
+        let stateDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: stateDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: stateDir) }
+
+        try await DeviceIdentityStore.withStateDirectory(stateDir) {
+            let certificateFingerprint = String(repeating: "ab", count: 32)
+            let certificateOwner = try #require(
+                GatewayDiscoveryPreferences.tlsDeviceAuthGatewayID(certificateFingerprint))
+            let certificateURL = try #require(URL(string: "wss://gateway-a.example.invalid"))
+            let certificateTLS = try #require(GatewayTLSRoute.resolve(
+                url: certificateURL,
+                connectionMode: .remote,
+                configuredFingerprint: certificateFingerprint,
+                storedFingerprint: nil))
+            let plaintextURL = try #require(URL(string: "ws://gateway.example.invalid"))
+            let primaryIdentity = DeviceIdentityStore.loadOrCreate()
+            let nodeIdentity = DeviceIdentityStore.loadOrCreate(profile: .node)
+            _ = DeviceAuthStore.storeToken(
+                deviceId: nodeIdentity.deviceId,
+                role: "node",
+                token: "legacy-unscoped-node-token",
+                profile: .node)
+            _ = DeviceAuthStore.storeToken(
+                deviceId: primaryIdentity.deviceId,
+                role: "node",
+                token: "bound-primary-token",
+                gatewayID: certificateOwner)
+            _ = DeviceAuthStore.storeToken(
+                deviceId: nodeIdentity.deviceId,
+                role: "node",
+                token: "bound-node-token",
+                gatewayID: "route:gateway-b",
+                profile: .node)
+
+            let cases: [(url: URL, tls: GatewayTLSRoute?, gatewayID: String?, expectedToken: String?)] = [
+                (plaintextURL, nil, nil, nil),
+                (certificateURL, certificateTLS, certificateOwner, "bound-primary-token"),
+                (plaintextURL, nil, "route:gateway-b", "bound-node-token"),
+            ]
+            for testCase in cases {
+                let endpoint = GatewayConnection.EndpointSnapshot(
+                    config: (
+                        url: testCase.url,
+                        token: nil,
+                        password: nil),
+                    tls: testCase.tls,
+                    routeAuthority: nil,
+                    deviceAuthGatewayID: testCase.gatewayID)
+                let options = MacNodeModeCoordinator.connectOptions(
+                    GatewayConnectOptions(
+                        role: "node",
+                        scopes: [],
+                        caps: [],
+                        commands: [],
+                        permissions: [:],
+                        clientId: "openclaw-macos",
+                        clientMode: "node",
+                        clientDisplayName: "macOS Test",
+                        deviceIdentityProfile: .node),
+                    for: endpoint)
+                let probe = CoordinatorConnectAuthProbe()
+                let webSocketSession = GatewayTestWebSocketSession(taskFactory: {
+                    GatewayTestWebSocketTask(sendHook: { _, message, sendIndex in
+                        guard sendIndex == 0 else { return }
+                        await probe.record(message)
+                    })
+                })
+                let gateway = GatewayNodeSession()
+
+                try await gateway.connect(
+                    url: endpoint.config.url,
+                    credentials: .init(),
+                    connectOptions: options,
+                    sessionBox: WebSocketSessionBox(session: webSocketSession),
+                    onConnected: {},
+                    onDisconnected: { _ in },
+                    onInvoke: { request in BridgeInvokeResponse(id: request.id, ok: true) })
+
+                #expect(await probe.snapshot()?["token"] == testCase.expectedToken)
+                await gateway.disconnect()
+            }
+        }
     }
 
     @Test @MainActor func `config and CLI changes restart startup scoped node host worker`() async {
@@ -567,6 +666,37 @@ struct MacNodeModeCoordinatorTests {
         let second = try self.nodeDeviceAuthBinding(deviceAuthGatewayID: "gateway-b")
 
         #expect(first.gatewayID != second.gatewayID)
+    }
+
+    @Test func `node certificate owner requires its matching TLS route`() throws {
+        let fingerprint = String(repeating: "ab", count: 32)
+        let owner = try #require(GatewayDiscoveryPreferences.tlsDeviceAuthGatewayID(fingerprint))
+        let url = try #require(URL(string: "wss://gateway.example.invalid"))
+        let tls = try #require(GatewayTLSRoute.resolve(
+            url: url,
+            connectionMode: .remote,
+            configuredFingerprint: fingerprint,
+            storedFingerprint: nil))
+        let admittedEndpoint = GatewayConnection.EndpointSnapshot(
+            config: (url: url, token: nil, password: nil),
+            tls: tls,
+            routeAuthority: nil,
+            deviceAuthGatewayID: owner)
+        let plaintextEndpoint = GatewayConnection.EndpointSnapshot(
+            config: (
+                url: try #require(URL(string: "ws://gateway.example.invalid")),
+                token: nil,
+                password: nil),
+            routeAuthority: nil,
+            deviceAuthGatewayID: owner)
+
+        let admitted = MacNodeModeCoordinator.nodeDeviceAuthBinding(for: admittedEndpoint)
+        let rejected = MacNodeModeCoordinator.nodeDeviceAuthBinding(for: plaintextEndpoint)
+
+        #expect(admitted.allowStoredDeviceAuth)
+        #expect(admitted.gatewayID == owner)
+        #expect(!rejected.allowStoredDeviceAuth)
+        #expect(rejected.gatewayID == nil)
     }
 
     @Test func `stop pause and endpoint changes revoke final connect admission`() throws {

@@ -44,6 +44,8 @@ const ROOT_TEST_ENTRY_GLOBS = [
   "test/type-contracts/**/*.ts!",
   // ExecHostTransportProofTests.swift launches this isolated native client by path.
   "src/infra/exec-host.native.test-support.ts!",
+  // GatewayDiscoveryPairingNativeProofTests.swift launches this isolated Gateway by path.
+  "test/e2e/qa-lab/runtime/macos-gateway-discovery-pairing.native.test-support.ts!",
   // The Windows CLI lifetime test launches this isolated probe by path.
   "test/helpers/openclaw-test-instance.cli.test-support.mjs!",
   // The public QA Gateway child launches this transport proxy by path.

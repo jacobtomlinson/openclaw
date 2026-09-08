@@ -9,15 +9,25 @@ import Testing
 private struct OnboardingStoredGatewayPreference {
     let stableID: String?
     let routeBinding: String?
+    let tlsFingerprint: String?
 }
 
 private func captureOnboardingGatewayPreference() -> OnboardingStoredGatewayPreference {
     OnboardingStoredGatewayPreference(
         stableID: GatewayDiscoveryPreferences.preferredStableID(),
-        routeBinding: GatewayDiscoveryPreferences.preferredRouteBinding())
+        routeBinding: GatewayDiscoveryPreferences.preferredRouteBinding(),
+        tlsFingerprint: GatewayDiscoveryPreferences.authenticatedTLSFingerprint())
 }
 
 private func restoreOnboardingGatewayPreference(_ preference: OnboardingStoredGatewayPreference) {
+    if let stableID = preference.stableID,
+       let fingerprint = preference.tlsFingerprint
+    {
+        GatewayDiscoveryPreferences.setAuthenticatedPreferredGateway(
+            stableID: stableID,
+            tlsFingerprint: fingerprint)
+        return
+    }
     GatewayDiscoveryPreferences.setPreferredStableID(
         preference.stableID,
         routeBinding: preference.routeBinding)
@@ -511,37 +521,6 @@ struct OnboardingViewSmokeTests {
             connected: false))
     }
 
-    @Test func `select remote gateway clears stale ssh target when endpoint unresolved`() async {
-        let override = FileManager().temporaryDirectory
-            .appendingPathComponent("openclaw-config-\(UUID().uuidString)")
-            .appendingPathComponent("openclaw.json")
-            .path
-
-        await TestIsolation.withEnvValues(["OPENCLAW_CONFIG_PATH": override]) {
-            let state = AppState(preview: true)
-            state.remoteTransport = .ssh
-            state.remoteTarget = "user@old-host:2222"
-            let view = OnboardingView(
-                state: state,
-                discoveryModel: GatewayDiscoveryModel(localDisplayName: InstanceIdentity.displayName))
-            let gateway = GatewayDiscoveryModel.DiscoveredGateway(
-                displayName: "Unresolved",
-                serviceHost: nil,
-                servicePort: nil,
-                lanHost: "txt-host.local",
-                tailnetDns: "txt-host.ts.net",
-                sshPort: 22,
-                gatewayPort: 18789,
-                cliPath: "/tmp/openclaw",
-                stableID: UUID().uuidString,
-                debugID: UUID().uuidString,
-                isLocal: false)
-
-            view.selectRemoteGateway(gateway)
-            #expect(state.remoteTarget.isEmpty)
-        }
-    }
-
     @Test func `different remote selection resets UI but preserves prior activation lease`() async throws {
         let override = FileManager().temporaryDirectory
             .appendingPathComponent("openclaw-config-\(UUID().uuidString)")
@@ -555,7 +534,7 @@ struct OnboardingViewSmokeTests {
             routeIdentity: "remote:id:gateway-a",
             defaults: defaults)
 
-        await TestIsolation.withEnvValues(["OPENCLAW_CONFIG_PATH": override]) {
+        try await TestIsolation.withEnvValues(["OPENCLAW_CONFIG_PATH": override]) {
             let state = AppState(preview: true)
             state.connectionMode = .remote
             let previousGatewayPreference = captureOnboardingGatewayPreference()
@@ -579,8 +558,15 @@ struct OnboardingViewSmokeTests {
                 debugID: "gateway-b",
                 isLocal: false)
 
-            view.selectRemoteGateway(gateway)
+            let lease = view.gatewaySelectionFence.begin()
+            let applied = view.completeRemoteGatewaySelection(
+                gateway,
+                route: AuthenticatedGatewayRoute(
+                    url: try #require(URL(string: "wss://gateway-b.local:18789")),
+                    tlsFingerprint: String(repeating: "bc", count: 32)),
+                lease: lease)
 
+            #expect(applied == .applied)
             #expect(state.connectionMode == .remote)
             #expect(view.aiSetup.manualKey.isEmpty)
             #expect(!OnboardingSystemAgentResumeStore.isPending(
@@ -661,12 +647,16 @@ struct OnboardingViewSmokeTests {
             routeIdentity: "remote:id:gateway-a",
             defaults: defaults)
 
-        await TestIsolation.withEnvValues(["OPENCLAW_CONFIG_PATH": override]) {
+        try await TestIsolation.withEnvValues(["OPENCLAW_CONFIG_PATH": override]) {
             let state = AppState(preview: true)
             state.connectionMode = .remote
             let previousGatewayPreference = captureOnboardingGatewayPreference()
             defer { restoreOnboardingGatewayPreference(previousGatewayPreference) }
             GatewayDiscoveryPreferences.setPreferredStableID("gateway-a")
+            let fingerprint = String(repeating: "ab", count: 32)
+            GatewayDiscoveryPreferences.setAuthenticatedPreferredGateway(
+                stableID: "gateway-a",
+                tlsFingerprint: fingerprint)
             let view = OnboardingView(
                 state: state,
                 discoveryModel: GatewayDiscoveryModel(localDisplayName: InstanceIdentity.displayName),
@@ -685,8 +675,15 @@ struct OnboardingViewSmokeTests {
                 debugID: "gateway-a",
                 isLocal: false)
 
-            view.selectRemoteGateway(gateway)
+            let lease = view.gatewaySelectionFence.begin()
+            let applied = view.completeRemoteGatewaySelection(
+                gateway,
+                route: AuthenticatedGatewayRoute(
+                    url: try #require(URL(string: "wss://gateway-a.local:18789")),
+                    tlsFingerprint: fingerprint),
+                lease: lease)
 
+            #expect(applied == .applied)
             #expect(view.aiSetup.manualKey == "pending-secret")
             #expect(OnboardingSystemAgentResumeStore.isPending(
                 for: "remote:id:gateway-a",
@@ -718,6 +715,39 @@ struct OnboardingViewSmokeTests {
         #expect(OnboardingSystemAgentResumeStore.isPending(
             for: "remote:id:gateway-a",
             defaults: defaults))
+    }
+
+    @Test func `local selection rejects an earlier authenticated pairing completion`() throws {
+        let previousGatewayPreference = captureOnboardingGatewayPreference()
+        defer { restoreOnboardingGatewayPreference(previousGatewayPreference) }
+        let state = AppState(preview: true)
+        state.connectionMode = .remote
+        let view = OnboardingView(state: state)
+        let staleLease = view.gatewaySelectionFence.begin()
+        let gateway = GatewayDiscoveryModel.DiscoveredGateway(
+            displayName: "Obsolete Gateway",
+            serviceHost: nil,
+            servicePort: nil,
+            lanHost: "obsolete-gateway.local",
+            tailnetDns: nil,
+            sshPort: 22,
+            gatewayPort: 18789,
+            cliPath: "/tmp/openclaw",
+            stableID: "obsolete-gateway",
+            debugID: "obsolete-gateway",
+            isLocal: false)
+
+        view.selectLocalGateway()
+        let result = view.completeRemoteGatewaySelection(
+            gateway,
+            route: AuthenticatedGatewayRoute(
+                url: try #require(URL(string: "wss://obsolete-gateway.local:18789")),
+                tlsFingerprint: String(repeating: "89", count: 32)),
+            lease: staleLease)
+
+        #expect(result == .superseded)
+        #expect(state.connectionMode == .local)
+        #expect(GatewayDiscoveryPreferences.preferredStableID() == nil)
     }
 
     @Test func `same local selection preserves pending gateway setup state`() throws {

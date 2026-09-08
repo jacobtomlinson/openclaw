@@ -157,12 +157,13 @@ if (tool === 'swift' && args[0] === 'test') {
 }
 
 describe.skipIf(process.platform === "win32")("native test launch ownership", () => {
-  it.each(["scripts/test-macos-native.mts", "test/scripts/macos-native-test-launch.test.ts"])(
-    "routes %s through macOS CI",
-    (changedPath) => {
-      expect(detectChangedScope([changedPath])).toMatchObject({ runNode: true, runMacos: true });
-    },
-  );
+  it.each([
+    "scripts/test-macos-native.mts",
+    "test/e2e/qa-lab/runtime/macos-gateway-discovery-pairing.native.test-support.ts",
+    "test/scripts/macos-native-test-launch.test.ts",
+  ])("routes %s through macOS CI", (changedPath) => {
+    expect(detectChangedScope([changedPath])).toMatchObject({ runNode: true, runMacos: true });
+  });
 
   it.each([
     { defaultCode: 0, namedCode: 0, logicalCpu: "3", expectedWidth: "3" },
@@ -179,7 +180,7 @@ describe.skipIf(process.platform === "win32")("native test launch ownership", ()
         `[macos-swift] Swift Testing parallelization width: ${expectedWidth}`,
       );
       const calls = f.calls().filter((call) => call.tool === "swift");
-      expect(calls).toHaveLength(defaultCode === 0 ? 3 : 2);
+      expect(calls).toHaveLength(defaultCode === 0 ? (namedCode === 0 ? 4 : 3) : 2);
       const [build, ...tests] = calls;
       expect(build.args).toEqual([
         "build",
@@ -193,6 +194,8 @@ describe.skipIf(process.platform === "win32")("native test launch ownership", ()
       expect(build.env.HOME).toBe(f.env.HOME);
       const roots = new Set<string>();
       for (const [index, test] of tests.entries()) {
+        const isDefaultSuite = index === 0;
+        const isPairingProof = index === 2;
         expect(test.args).toEqual([
           "test",
           "--package-path",
@@ -203,16 +206,24 @@ describe.skipIf(process.platform === "win32")("native test launch ownership", ()
           "--skip-build",
           "--experimental-maximum-parallelization-width",
           expectedWidth,
-          index === 0 ? "--skip" : "--filter",
-          "AppStateIsolationTests",
+          isDefaultSuite ? "--skip" : "--filter",
+          isPairingProof ? "GatewayDiscoveryPairingNativeProofTests" : "AppStateIsolationTests",
         ]);
-        if (index === 0) {
+        if (isDefaultSuite || isPairingProof) {
           expect(test.env.OPENCLAW_PROFILE).toBe("default");
         } else {
           expect(test.env.OPENCLAW_PROFILE).toMatch(/^test-[a-z0-9-]+$/);
         }
+        expect(test.env.OPENCLAW_MACOS_GATEWAY_PAIRING_PROOF).toBe(
+          isPairingProof ? "1" : undefined,
+        );
         expect(test.env.OPENCLAW_PROFILE).not.toBe(f.env.OPENCLAW_PROFILE);
-        expect(test.env.OPENCLAW_GATEWAY_TOKEN).toBeUndefined();
+        expect(test.env.OPENCLAW_GATEWAY_TOKEN).toBe(
+          isPairingProof ? "ambient-token-must-not-route" : undefined,
+        );
+        expect(test.env.OPENCLAW_GATEWAY_PASSWORD).toBe(
+          isPairingProof ? "ambient-password-must-not-route" : undefined,
+        );
         for (const key of [
           "DEVELOPER_DIR",
           "DYLD_FRAMEWORK_PATH",

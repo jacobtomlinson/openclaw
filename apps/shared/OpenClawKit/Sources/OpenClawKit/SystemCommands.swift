@@ -8,6 +8,7 @@ public enum OpenClawSystemCommand: String, Codable, Sendable {
     case execApprovalsSet = "system.execApprovals.set"
 }
 
+// periphery:ignore - Shipped identifier retained for compatibility tests after consumers stopped advertising it.
 public enum OpenClawFileSystemCommand: String, Codable, Sendable {
     case listDir = "fs.listDir"
 }

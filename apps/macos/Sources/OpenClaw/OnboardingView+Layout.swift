@@ -90,6 +90,7 @@ extension OnboardingView {
 
     func onboardingDidDisappear() {
         onboardingVisible = false
+        gatewaySelectionFence.invalidate()
         configuredGatewayProbe.invalidate()
         // Queued detection can otherwise proceed into a mutating activation
         // after the window or its selected route has gone away.

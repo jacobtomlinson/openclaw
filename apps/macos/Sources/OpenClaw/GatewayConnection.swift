@@ -1013,6 +1013,9 @@ extension GatewayConnection {
                 allowsRedirects: false,
                 allowsStoredCredentials: false))
         }
+        let admittedDeviceAuthGatewayID = GatewayDiscoveryPreferences.admittedDeviceAuthGatewayID(
+            endpoint.deviceAuthGatewayID,
+            tls: endpoint.tls)
         let client = GatewayChannelActor(
             url: config.url,
             token: browserSession == nil ? config.token : nil,
@@ -1041,8 +1044,8 @@ extension GatewayConnection {
                 clientMode: "ui",
                 clientDisplayName: InstanceIdentity.displayName,
                 includeDeviceIdentity: self.includeDeviceIdentity,
-                allowStoredDeviceAuth: browserSession == nil && endpoint.deviceAuthGatewayID != nil,
-                deviceAuthGatewayID: browserSession == nil ? endpoint.deviceAuthGatewayID : nil),
+                allowStoredDeviceAuth: browserSession == nil && admittedDeviceAuthGatewayID != nil,
+                deviceAuthGatewayID: browserSession == nil ? admittedDeviceAuthGatewayID : nil),
             disconnectHandler: { [weak self] reason, socketGeneration in
                 await self?.handleDisconnect(
                     routeGeneration: configuredRouteGeneration,

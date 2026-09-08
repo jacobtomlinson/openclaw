@@ -301,6 +301,7 @@ extension OnboardingView {
     }
 
     func retireGatewayStateForRemoteEndpointEdit() {
+        self.gatewaySelectionFence.invalidate()
         self.resetRemoteProbeFeedback()
         // Editing only retires work owned by the old route. The durable lease
         // survives, and Check connection / the AI page probes the finished value.

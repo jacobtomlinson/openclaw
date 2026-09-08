@@ -411,7 +411,8 @@ actor GatewayEndpointStore {
             connectionMode: initialMode,
             remoteTransport: .ssh,
             remoteURL: "",
-            remoteTarget: "")
+            remoteTarget: "",
+            root: root)
         switch initialMode {
         case .local:
             if let reason = self.localUnavailableReason {
@@ -1022,19 +1023,35 @@ extension GatewayEndpointStore {
         } else {
             sshRouteIdentity = nil
         }
-        let deviceAuthGatewayID = GatewayDiscoveryPreferences.deviceAuthGatewayID(root: root, connectionMode: mode)
+        let configuredTLSFingerprint = isRemote ? GatewayRemoteConfig.resolveTLSFingerprint(root: root) : nil
+        let resolvedRemoteURL = remoteResolution.directURL?.absoluteString
+            ?? GatewayRemoteConfig.resolveUrlString(root: root)
+            ?? ""
+        let deviceAuthGatewayID = GatewayDiscoveryPreferences.deviceAuthGatewayID(
+            connectionMode: mode,
+            remoteTransport: remoteResolution.transport,
+            remoteURL: resolvedRemoteURL,
+            remoteTarget: sshRouteIdentity?.target ?? "",
+            root: root,
+            tlsFingerprint: configuredTLSFingerprint)
+        // A pinned setup handoff issues a route-scoped device token. Keep global
+        // config and environment credentials away from that independently trusted Gateway.
+        let usesAuthenticatedDiscoveryIdentity = isRemote &&
+            remoteResolution.transport == .direct &&
+            GatewayDiscoveryPreferences.hasAuthenticatedTLSIdentity(
+                configuredFingerprint: configuredTLSFingerprint)
 
         let source = SourceSnapshot(
             routingGeneration: app.generation,
             mode: SourceMode(mode),
-            token: mode == .unconfigured
+            token: mode == .unconfigured || usesAuthenticatedDiscoveryIdentity
                 ? nil
                 : self.resolveGatewayToken(
                     isRemote: isRemote,
                     root: root,
                     env: env,
                     launchdSnapshot: launchdSnapshot),
-            password: mode == .unconfigured
+            password: mode == .unconfigured || usesAuthenticatedDiscoveryIdentity
                 ? nil
                 : self.resolveGatewayPassword(
                     isRemote: isRemote,
@@ -1051,7 +1068,7 @@ extension GatewayEndpointStore {
             bindMode: bindMode,
             remoteTransport: SourceTransport(remoteResolution.transport),
             directRemoteURL: remoteResolution.directURL,
-            remoteTLSFingerprint: isRemote ? GatewayRemoteConfig.resolveTLSFingerprint(root: root) : nil,
+            remoteTLSFingerprint: configuredTLSFingerprint,
             sshRouteIdentity: sshRouteIdentity)
         let selectionIsCurrent = await acceptSource(source)
         guard selectionIsCurrent, !Task.isCancelled else {

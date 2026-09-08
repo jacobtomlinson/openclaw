@@ -57,6 +57,7 @@ await runWithFailedTrailer("macos-native", async () => {
       "CLANG_MODULE_CACHE_PATH",
       // Preserve Actions' orphan-cleanup correlation through the isolated child env.
       "RUNNER_TRACKING_ID",
+      "OPENCLAW_MACOS_GATEWAY_PAIRING_PROOF",
     ]) {
       if (env[key] !== undefined) {
         childEnv[key] = env[key];
@@ -75,6 +76,14 @@ await runWithFailedTrailer("macos-native", async () => {
       OPENCLAW_STATE_DIR: state,
       OPENCLAW_CONFIG_PATH: path.join(state, "openclaw.json"),
     });
+    if (env.OPENCLAW_MACOS_GATEWAY_PAIRING_PROOF === "1") {
+      // Fixed synthetic values exercise the real ProcessInfo environment path
+      // without inheriting any operator or runner Gateway credentials.
+      Object.assign(childEnv, {
+        OPENCLAW_GATEWAY_TOKEN: "ambient-token-must-not-route",
+        OPENCLAW_GATEWAY_PASSWORD: "ambient-password-must-not-route",
+      });
+    }
 
     // Keep SwiftPM's build cache available without inheriting the runner's app state.
     const cache = path.join(home, "Library/Caches");

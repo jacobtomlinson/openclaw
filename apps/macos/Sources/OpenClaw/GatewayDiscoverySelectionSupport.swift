@@ -1,68 +1,113 @@
+import AppKit
 import Foundation
 import OpenClawDiscovery
-import OpenClawKit
+
+@MainActor
+final class GatewayDiscoverySelectionFence {
+    struct Lease: Equatable {
+        fileprivate let id: UUID
+    }
+
+    private var activeLease: Lease?
+
+    func begin() -> Lease {
+        let lease = Lease(id: UUID())
+        self.activeLease = lease
+        return lease
+    }
+
+    @discardableResult
+    func invalidate() -> Bool {
+        let hadActiveLease = self.activeLease != nil
+        self.activeLease = nil
+        return hadActiveLease
+    }
+
+    func consume(_ lease: Lease) -> Bool {
+        guard self.activeLease == lease else { return false }
+        self.activeLease = nil
+        return true
+    }
+}
+
+enum GatewayDiscoverySelectionApplyResult: Equatable {
+    case applied
+    case superseded
+    case saveFailed
+}
 
 @MainActor
 enum GatewayDiscoverySelectionSupport {
-    private static let defaultSshTunnelGatewayUrl = "ws://127.0.0.1:18789"
+    static func requestSetupCode(for gateway: GatewayDiscoveryModel.DiscoveredGateway) -> String? {
+        let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 420, height: 24))
+        field.placeholderString = "Paste the setup code from this Gateway"
+        field.setAccessibilityLabel("Gateway setup code")
 
-    static func applyRemoteSelection(
-        gateway: GatewayDiscoveryModel.DiscoveredGateway,
-        state: AppState)
-    {
-        let preferredTransport = self.preferredTransport(
-            for: gateway,
-            current: state.remoteTransport)
-        if preferredTransport != state.remoteTransport {
-            state.remoteTransport = preferredTransport
-        }
-
-        if preferredTransport == .direct {
-            state.remoteUrl = GatewayDiscoveryHelpers.directUrl(for: gateway) ?? ""
-        } else {
-            state.remoteUrl = self.sshTunnelGatewayUrl(current: state.remoteUrl)
-        }
-        state.remoteTarget = GatewayDiscoveryHelpers.sshTarget(for: gateway) ?? ""
+        let alert = NSAlert()
+        alert.messageText = "Authenticate \(gateway.displayName)"
+        alert.informativeText =
+            "Bonjour can locate a Gateway, but cannot prove its identity. " +
+            "On that Gateway, open Control UI → Settings → Devices → Pair device, keep Full access, " +
+            "and create a setup code. " +
+            "OpenClaw will verify its TLS certificate before sending the one-time bootstrap credential."
+        alert.alertStyle = .informational
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Authenticate")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+        return field.stringValue
     }
 
-    private static func sshTunnelGatewayUrl(current: String) -> String {
-        let trimmed = current.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty,
-              let url = URL(string: trimmed),
-              let host = url.host?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !host.isEmpty,
-              LoopbackHost.isLoopbackHost(host)
-        else {
-            return self.defaultSshTunnelGatewayUrl
-        }
-
-        return "ws://127.0.0.1:\(url.port ?? 18789)"
+    static func presentError(_ error: Error) {
+        let alert = NSAlert()
+        alert.messageText = "Could Not Authenticate Gateway"
+        alert.informativeText = error.localizedDescription
+        alert.alertStyle = .warning
+        alert.runModal()
     }
 
-    static func preferredTransport(
-        for gateway: GatewayDiscoveryModel.DiscoveredGateway,
-        current: AppState.RemoteTransport) -> AppState.RemoteTransport
+    static func applyAuthenticatedSelection(
+        stableID: String,
+        route: AuthenticatedGatewayRoute,
+        state: AppState,
+        lease: GatewayDiscoverySelectionFence.Lease,
+        fence: GatewayDiscoverySelectionFence) -> GatewayDiscoverySelectionApplyResult
     {
-        if self.shouldPreferDirectTransport(for: gateway) {
-            return .direct
+        // Consuming the current user-intent lease is the final synchronous gate
+        // before this authenticated route can become observable to either client.
+        guard fence.consume(lease) else { return .superseded }
+        guard GatewayDiscoveryPreferences.tlsDeviceAuthGatewayID(route.tlsFingerprint) != nil else {
+            return .saveFailed
         }
-        return current
-    }
+        let previousPreference = (
+            stableID: GatewayDiscoveryPreferences.preferredStableID(),
+            routeBinding: GatewayDiscoveryPreferences.preferredRouteBinding(),
+            tlsFingerprint: GatewayDiscoveryPreferences.authenticatedTLSFingerprint())
 
-    static func shouldPreferDirectTransport(
-        for gateway: GatewayDiscoveryModel.DiscoveredGateway) -> Bool
-    {
-        guard GatewayDiscoveryHelpers.directUrl(for: gateway) != nil else { return false }
-        if gateway.gatewayTls || gateway.gatewayDirectReachable {
-            return true
+        // Publish trust before the replacement can become observable. The AppState
+        // owner commits the URL, fingerprint, and removal of shared auth atomically.
+        GatewayDiscoveryPreferences.setAuthenticatedPreferredGateway(
+            stableID: stableID,
+            tlsFingerprint: route.tlsFingerprint)
+        let replacement = AppState.PrimaryGatewayConfiguration(
+            url: route.url,
+            token: nil,
+            tlsFingerprint: route.tlsFingerprint)
+        guard state.replacePrimaryGateway(replacement) else {
+            if let stableID = previousPreference.stableID,
+               let fingerprint = previousPreference.tlsFingerprint
+            {
+                GatewayDiscoveryPreferences.setAuthenticatedPreferredGateway(
+                    stableID: stableID,
+                    tlsFingerprint: fingerprint)
+            } else {
+                GatewayDiscoveryPreferences.setPreferredStableID(
+                    previousPreference.stableID,
+                    routeBinding: previousPreference.routeBinding)
+            }
+            return .saveFailed
         }
-
-        guard let host = GatewayDiscoveryHelpers.resolvedServiceHost(for: gateway)?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-        else {
-            return false
-        }
-        return host.hasSuffix(".ts.net")
+        MacNodeModeCoordinator.shared.refresh()
+        return .applied
     }
 }

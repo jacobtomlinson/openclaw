@@ -14,6 +14,7 @@ struct ConnectionSettingsView: View {
     @State private var gatewayDiscovery = GatewayDiscoveryModel(
         localDisplayName: InstanceIdentity.displayName)
     @State private var remoteStatus: RemoteStatus = .idle
+    @State private var gatewaySelectionFence = GatewayDiscoverySelectionFence()
     private let isPreview = ProcessInfo.processInfo.isPreview
     private var isNixMode: Bool {
         ProcessInfo.processInfo.isNixMode
@@ -64,7 +65,22 @@ struct ConnectionSettingsView: View {
         .onChange(of: self.isActive) { _, active in
             self.updateActiveWork(active: active)
         }
-        .onDisappear { self.gatewayDiscovery.stop() }
+        .onChange(of: self.state.connectionMode) { _, _ in
+            self.invalidateGatewayPairing()
+        }
+        .onChange(of: self.state.remoteTransport) { _, _ in
+            self.invalidateGatewayPairing()
+        }
+        .onChange(of: self.state.remoteUrl) { _, _ in
+            self.invalidateGatewayPairing()
+        }
+        .onChange(of: self.state.remoteTarget) { _, _ in
+            self.invalidateGatewayPairing()
+        }
+        .onDisappear {
+            self.invalidateGatewayPairing()
+            self.gatewayDiscovery.stop()
+        }
     }
 
     private func updateActiveWork(active: Bool) {
@@ -485,6 +501,11 @@ private enum RemoteStatus: Equatable {
 }
 
 extension ConnectionSettingsView {
+    private func invalidateGatewayPairing() {
+        guard self.gatewaySelectionFence.invalidate(), self.remoteStatus == .checking else { return }
+        self.remoteStatus = .idle
+    }
+
     private var healthRow: some View {
         LabeledContent {
             HStack(spacing: 8) {
@@ -542,8 +563,37 @@ extension ConnectionSettingsView {
     }
 
     private func applyDiscoveredGateway(_ gateway: GatewayDiscoveryModel.DiscoveredGateway) {
-        GatewayDiscoverySelectionSupport.applyRemoteSelection(gateway: gateway, state: self.state)
-        MacNodeModeCoordinator.shared.setPreferredGatewayStableID(gateway.stableID, state: self.state)
+        guard let setupInput = GatewayDiscoverySelectionSupport.requestSetupCode(for: gateway) else { return }
+        let lease = self.gatewaySelectionFence.begin()
+        self.remoteStatus = .checking
+        Task { @MainActor in
+            let route: AuthenticatedGatewayRoute
+            do {
+                route = try await GatewayDiscoveryPairing.authenticate(setupInput: setupInput)
+            } catch {
+                guard self.gatewaySelectionFence.consume(lease) else { return }
+                self.remoteStatus = .failed(error.localizedDescription)
+                GatewayDiscoverySelectionSupport.presentError(error)
+                return
+            }
+
+            switch GatewayDiscoverySelectionSupport.applyAuthenticatedSelection(
+                stableID: gateway.stableID,
+                route: route,
+                state: self.state,
+                lease: lease,
+                fence: self.gatewaySelectionFence)
+            {
+            case .applied:
+                await self.testRemote()
+            case .superseded:
+                return
+            case .saveFailed:
+                let error = GatewayDiscoveryPairingError.configSaveFailed
+                self.remoteStatus = .failed(error.localizedDescription)
+                GatewayDiscoverySelectionSupport.presentError(error)
+            }
+        }
     }
 }
 

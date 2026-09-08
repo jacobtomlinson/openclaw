@@ -4,6 +4,7 @@ import SwiftUI
 
 extension OnboardingView {
     func selectLocalGateway() {
+        gatewaySelectionFence.invalidate()
         if state.connectionMode != .local {
             resetGatewayBoundAIState()
         }
@@ -17,6 +18,7 @@ extension OnboardingView {
     }
 
     func selectUnconfiguredGateway() {
+        gatewaySelectionFence.invalidate()
         resetGatewayBoundAIState()
         defaultsToLocalGateway = false
         state.connectionMode = .unconfigured
@@ -27,30 +29,63 @@ extension OnboardingView {
     }
 
     func handleRemoteSelection() {
+        gatewaySelectionFence.invalidate()
         defaultsToLocalGateway = false
         state.connectionMode = .remote
         showRemoteChoices.toggle()
     }
 
     func selectRemoteGateway(_ gateway: GatewayDiscoveryModel.DiscoveredGateway) {
+        guard let setupInput = GatewayDiscoverySelectionSupport.requestSetupCode(for: gateway) else { return }
+        let lease = gatewaySelectionFence.begin()
+        Task { @MainActor in
+            let route: AuthenticatedGatewayRoute
+            do {
+                route = try await GatewayDiscoveryPairing.authenticate(setupInput: setupInput)
+            } catch {
+                guard self.gatewaySelectionFence.consume(lease) else { return }
+                GatewayDiscoverySelectionSupport.presentError(error)
+                return
+            }
+
+            switch self.completeRemoteGatewaySelection(gateway, route: route, lease: lease) {
+            case .applied:
+                return
+            case .superseded:
+                return
+            case .saveFailed:
+                GatewayDiscoverySelectionSupport.presentError(GatewayDiscoveryPairingError.configSaveFailed)
+            }
+        }
+    }
+
+    func completeRemoteGatewaySelection(
+        _ gateway: GatewayDiscoveryModel.DiscoveredGateway,
+        route: AuthenticatedGatewayRoute,
+        lease: GatewayDiscoverySelectionFence.Lease) -> GatewayDiscoverySelectionApplyResult
+    {
+        let previousFingerprint = GatewayDiscoveryPreferences.authenticatedTLSFingerprint()
         let shouldResetGatewayState = Self.shouldResetGatewayBoundAIState(
             connectionMode: state.connectionMode,
             currentPreferredGatewayID: self.effectivePreferredGatewayID,
             persistedPreferredGatewayID: GatewayDiscoveryPreferences.preferredStableID(),
-            selectedGatewayID: gateway.stableID)
+            selectedGatewayID: gateway.stableID) ||
+            (previousFingerprint != nil && previousFingerprint != route.tlsFingerprint)
+        let result = GatewayDiscoverySelectionSupport.applyAuthenticatedSelection(
+            stableID: gateway.stableID,
+            route: route,
+            state: state,
+            lease: lease,
+            fence: gatewaySelectionFence)
+        guard result == .applied else { return result }
         if shouldResetGatewayState {
-            // The mode can remain `.remote` while the selected Gateway changes,
-            // so its onChange hook alone cannot retire route-bound state.
             resetGatewayBoundAIState()
             resetRemoteProbeFeedback()
         }
         defaultsToLocalGateway = false
         preferredGatewayID = gateway.stableID
-        GatewayDiscoverySelectionSupport.applyRemoteSelection(gateway: gateway, state: state)
-
-        state.connectionMode = .remote
-        MacNodeModeCoordinator.shared.setPreferredGatewayStableID(gateway.stableID, state: state)
         probeConfiguredGatewayForDashboard()
+        return .applied
     }
 
     static func shouldResetGatewayBoundAIState(

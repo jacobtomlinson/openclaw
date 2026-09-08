@@ -1006,6 +1006,20 @@ extension GatewayConnectionControlTests {
             routeB: (tunnelURL, ownerB))
     }
 
+    @Test func `plaintext endpoint never receives certificate owned device token`() async throws {
+        let fingerprint = String(repeating: "ab", count: 32)
+        let owner = try #require(GatewayDiscoveryPreferences.tlsDeviceAuthGatewayID(fingerprint))
+        let url = try #require(URL(string: "ws://gateway.example"))
+
+        let auth = try await self.connectAuth(
+            route: (url, owner),
+            storedDeviceToken: "certificate-owned-device-token",
+            unscopedToken: "legacy-unscoped-token")
+
+        #expect(auth?["token"] == nil)
+        #expect(auth?["deviceToken"] == nil)
+    }
+
     @Test func `retired socket callbacks cannot mutate cache or subscribers`() async throws {
         let (connection, _) = makeTestGatewayConnection()
         try await connection.refresh()
