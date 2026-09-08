@@ -39,6 +39,9 @@ const lazyColumns = [
   ["task_runs", "execution_owner_host", "TEXT", true],
   ["task_runs", "execution_owner_pid", "INTEGER", true],
   ["task_runs", "execution_owner_start_identity", "INTEGER", true],
+  ["cron_jobs", "grant_definition_revision", "TEXT"],
+  ["cron_jobs", "grant_definition_generation", "INTEGER"],
+  ["cron_jobs", "grant_definition_updated_at", "INTEGER"],
 ] as const satisfies readonly LazyColumn[];
 
 function lazyColumnDefinitions(firstUseOnly?: boolean) {
