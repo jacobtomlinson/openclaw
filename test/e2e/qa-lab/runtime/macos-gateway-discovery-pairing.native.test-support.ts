@@ -2,6 +2,7 @@
 import fs from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
+import { startPairingTransportFixture } from "./macos-gateway-discovery-pairing.transport.test-support.js";
 
 async function getFreePort(): Promise<number> {
   const server = net.createServer();
@@ -54,50 +55,79 @@ const [
 await fs.mkdir(gatewayStateDir, { recursive: true, mode: 0o700 });
 const certPath = path.join(gatewayStateDir, "gateway-cert.pem");
 const keyPath = path.join(gatewayStateDir, "gateway-key.pem");
+const rotatedCertPath = path.join(gatewayStateDir, "gateway-cert-b.pem");
+const rotatedKeyPath = path.join(gatewayStateDir, "gateway-key-b.pem");
 const tls = await loadGatewayTlsServerRuntime({
   enabled: true,
   autoGenerate: true,
   certPath,
   keyPath,
 });
-if (!tls.enabled || !tls.fingerprintSha256) {
+if (!tls.enabled || !tls.fingerprintSha256 || !tls.tlsOptions) {
   throw new Error(tls.error ?? "Gateway TLS runtime did not expose a fingerprint");
 }
-await fs.writeFile(
-  process.env.OPENCLAW_CONFIG_PATH,
-  `${JSON.stringify({
-    gateway: {
-      auth: { mode: "token", token: "native-proof-shared-token" },
-      bind: "loopback",
-      controlUi: { enabled: false },
-      tls: { enabled: true, autoGenerate: false, certPath, keyPath },
-    },
-  })}\n`,
-  { encoding: "utf8", mode: 0o600 },
-);
-clearConfigCache();
-clearRuntimeConfigSnapshot();
-
-const issued = await issueDevicePairSetupBootstrapToken({
-  profile: FULL_ACCESS_PAIRING_SETUP_BOOTSTRAP_PROFILE,
+const rotatedTls = await loadGatewayTlsServerRuntime({
+  enabled: true,
+  autoGenerate: true,
+  certPath: rotatedCertPath,
+  keyPath: rotatedKeyPath,
 });
+if (!rotatedTls.enabled || !rotatedTls.fingerprintSha256 || !rotatedTls.tlsOptions) {
+  throw new Error(rotatedTls.error ?? "Rotated Gateway TLS runtime did not expose a fingerprint");
+}
+
+async function writeConfig(certificatePath: string, privateKeyPath: string) {
+  await fs.writeFile(
+    path.join(gatewayStateDir, "openclaw.json"),
+    `${JSON.stringify({
+      gateway: {
+        auth: { mode: "token", token: "native-proof-shared-token" },
+        bind: "loopback",
+        controlUi: { enabled: false },
+        tls: { enabled: true, autoGenerate: false, certPath: certificatePath, keyPath: privateKeyPath },
+      },
+    })}\n`,
+    { encoding: "utf8", mode: 0o600 },
+  );
+  clearConfigCache();
+  clearRuntimeConfigSnapshot();
+}
+
+await writeConfig(certPath, keyPath);
 const port = await getFreePort();
-const server = await startGatewayServer(port, {
+const serverOptions = {
   auth: { mode: "token", token: "native-proof-shared-token" },
   bind: "loopback",
   controlUiEnabled: false,
   sidecarStartup: "defer",
-});
+} as const;
+let server = await startGatewayServer(port, serverOptions);
+let transport: Awaited<ReturnType<typeof startPairingTransportFixture>> | undefined;
 
 try {
+  transport = await startPairingTransportFixture({
+    certificates: [
+      { options: tls.tlsOptions, fingerprint: tls.fingerprintSha256 },
+      { options: rotatedTls.tlsOptions, fingerprint: rotatedTls.fingerprintSha256 },
+    ],
+    backendURL: `wss://127.0.0.1:${port}`,
+    issueSetup: async (url, tlsFingerprint) => {
+      const issued = await issueDevicePairSetupBootstrapToken({
+        profile: FULL_ACCESS_PAIRING_SETUP_BOOTSTRAP_PROFILE,
+      });
+      return { url, tlsFingerprint, bootstrapToken: issued.token, expiresAtMs: issued.expiresAtMs };
+    },
+    rotateGateway: async () => {
+      // Restart only this disposable Gateway. Device identity and both role
+      // credentials stay in the same fixture-owned state directory.
+      await server.close({ reason: "native pairing proof certificate rotation" });
+      await writeConfig(rotatedCertPath, rotatedKeyPath);
+      server = await startGatewayServer(port, serverOptions);
+    },
+  });
   await fs.writeFile(
     setupPath,
-    `${JSON.stringify({
-      url: `wss://127.0.0.1:${port}`,
-      tlsFingerprint: tls.fingerprintSha256,
-      bootstrapToken: issued.token,
-      expiresAtMs: issued.expiresAtMs,
-    })}\n`,
+    `${JSON.stringify(transport.setup)}\n`,
     { encoding: "utf8", mode: 0o600 },
   );
   await fs.writeFile(readyPath, "ready\n", { encoding: "utf8", mode: 0o600 });
@@ -106,5 +136,6 @@ try {
     process.once("SIGTERM", resolve);
   });
 } finally {
+  await transport?.close();
   await server.close({ reason: "macOS discovery pairing proof complete" });
 }

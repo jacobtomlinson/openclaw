@@ -10,46 +10,21 @@ import Testing
 struct GatewayDiscoveryPairingNativeProofTests {
     @Test(.enabled(if: ProcessInfo.processInfo.environment["OPENCLAW_MACOS_GATEWAY_PAIRING_PROOF"] == "1"))
     func `mismatched discovery is denied before full access pairing and routed reconnects succeed`() async throws {
-        let environment = ProcessInfo.processInfo.environment
-        let statePath = try #require(environment["OPENCLAW_STATE_DIR"])
-        let stateURL = URL(fileURLWithPath: statePath).resolvingSymlinksInPath()
-        let root = stateURL.deletingLastPathComponent()
-        let setupURL = root.appendingPathComponent("gateway-setup.json")
-        let readyURL = root.appendingPathComponent("gateway-ready")
-        let gatewayStateURL = root.appendingPathComponent("gateway-state", isDirectory: true)
-        let logURL = root.appendingPathComponent("gateway.log")
-
-        var repo = URL(fileURLWithPath: #filePath)
-        for _ in 0..<5 {
-            repo.deleteLastPathComponent()
+        let fixture = try await GatewayPairingNativeProofFixture.start()
+        let outcome: Result<Void, Error>
+        do {
+            try await self.provePairingAndRevocation(fixture)
+            try await self.proveCertificateRotation(fixture)
+            outcome = .success(())
+        } catch {
+            outcome = .failure(error)
         }
-        let child = Process()
-        child.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        child.arguments = [
-            "node", "--import", "tsx",
-            repo.appendingPathComponent(
-                "test/e2e/qa-lab/runtime/macos-gateway-discovery-pairing.native.test-support.ts").path,
-            setupURL.path,
-            readyURL.path,
-            gatewayStateURL.path,
-        ]
-        child.currentDirectoryURL = repo
-        child.environment = environment
-        FileManager.default.createFile(atPath: logURL.path, contents: nil)
-        let output = try FileHandle(forWritingTo: logURL)
-        child.standardOutput = output
-        child.standardError = output
-        try child.run()
-        defer {
-            if child.isRunning {
-                child.terminate()
-                child.waitUntilExit()
-            }
-            try? output.close()
-        }
+        await fixture.stop()
+        try outcome.get()
+    }
 
-        try await self.waitForReadyFile(readyURL, child: child)
-        let setupData = try Data(contentsOf: setupURL)
+    private func provePairingAndRevocation(_ fixture: GatewayPairingNativeProofFixture) async throws {
+        let setupData = try JSONEncoder().encode(fixture.setup)
         var wrongSetup = try #require(JSONSerialization.jsonObject(with: setupData) as? [String: Any])
         let fingerprint = try #require(wrongSetup["tlsFingerprint"] as? String)
         let replacement = fingerprint.hasSuffix("0") ? "1" : "0"
@@ -199,35 +174,19 @@ struct GatewayDiscoveryPairingNativeProofTests {
                 configuredFingerprint: source.remoteTLSFingerprint),
             routeAuthority: nil,
             deviceAuthGatewayID: owner)
-        let operatorConnection = GatewayConnection(endpointProvider: { endpoint })
+        try await self.proveTransportIsolation(fixture, fingerprint: fingerprint)
+
+        let operatorConnection = GatewayConnection(endpointProvider: { endpoint }, supportsSharedEndpointRecovery: false)
         defer { Task { await operatorConnection.shutdown() } }
         _ = try await operatorConnection.request(method: "health", params: nil, timeoutMs: 15_000)
         #expect(await operatorConnection.authSource() == .deviceToken)
         print("[pairing-proof] saved-route operator reconnect used fingerprint-owned device auth")
 
-        let nodeOptions = MacNodeModeCoordinator.connectOptions(
-            GatewayConnectOptions(
-                role: "node",
-                scopes: [],
-                caps: [],
-                commands: [],
-                permissions: [:],
-                clientId: "openclaw-macos",
-                clientMode: "node",
-                clientDisplayName: "macOS Gateway pairing proof",
-                deviceIdentityProfile: .node),
-            for: endpoint)
-        #expect(nodeOptions.deviceIdentityProfile == .primary)
-        let nodeChannel = GatewayChannelActor(
-            url: savedURL,
-            token: endpoint.config.token,
-            password: endpoint.config.password,
-            session: endpoint.tls.map { WebSocketSessionBox(session: GatewayTLSPinningSession(params: $0.params)) },
-            connectOptions: nodeOptions)
-        defer { Task { await nodeChannel.shutdown() } }
-        try await nodeChannel.connect()
-        #expect(await nodeChannel.authSource() == .deviceToken)
-        print("[pairing-proof] saved-route node reconnect used fingerprint-owned device auth")
+        let nodeClient = GatewayPairingNativeProofNode()
+        defer { Task { await nodeClient.disconnect() } }
+        try await nodeClient.connect(endpoint)
+        #expect(nodeClient.admissions == 1)
+        print("[pairing-proof] saved-route node reconnect used the production TLS cache and node session")
 
         _ = try await operatorConnection.request(
             method: "device.token.revoke",
@@ -248,7 +207,7 @@ struct GatewayDiscoveryPairingNativeProofTests {
         try await self.expectSetupRecovery(for: discovered, state: reconnectState)
         print("[pairing-proof] revoked operator role required setup recovery before publication")
         await operatorConnection.shutdown()
-        await nodeChannel.shutdown()
+        await nodeClient.disconnect()
         print("[pairing-proof] Gateway revoked both fingerprint-owned device roles")
 
         var plaintextComponents = try #require(URLComponents(url: savedURL, resolvingAgainstBaseURL: false))
@@ -269,7 +228,7 @@ struct GatewayDiscoveryPairingNativeProofTests {
             tls: nil) == nil)
         print("[pairing-proof] plaintext downgrade rejected certificate-owned credentials")
 
-        let revokedOperator = GatewayConnection(endpointProvider: { endpoint })
+        let revokedOperator = GatewayConnection(endpointProvider: { endpoint }, supportsSharedEndpointRecovery: false)
         defer { Task { await revokedOperator.shutdown() } }
         do {
             _ = try await revokedOperator.request(method: "health", params: nil, timeoutMs: 15_000)
@@ -279,20 +238,23 @@ struct GatewayDiscoveryPairingNativeProofTests {
             print("[pairing-proof] revoked operator authority rejected before protected health RPC")
         }
 
-        let revokedNode = GatewayChannelActor(
-            url: savedURL,
-            token: nil,
-            password: nil,
-            session: endpoint.tls.map { WebSocketSessionBox(session: GatewayTLSPinningSession(params: $0.params)) },
-            connectOptions: nodeOptions)
-        defer { Task { await revokedNode.shutdown() } }
+        await revokedOperator.shutdown()
+
+        let revokedNode = GatewayPairingNativeProofNode()
+        let revokedNodeToken = try #require(DeviceAuthStore.loadToken(
+            deviceId: identity.deviceId, role: "node", gatewayID: owner, profile: .primary)).token
+        try await fixture.command("mode", fields: ["mode": "normal"])
         do {
-            try await revokedNode.connect()
+            try await revokedNode.connect(endpoint)
             Issue.record("Revoked node authority established a Gateway connection")
         } catch {
-            #expect(await revokedNode.authSource() == .deviceToken)
+            #expect(revokedNode.admissions == 0)
+            #expect(await revokedNode.session.currentRoute() == nil)
+            let observed = try await fixture.command("snapshot")
+            #expect(observed.connects.contains { $0.role == "node" && $0.auth["token"] == revokedNodeToken })
             print("[pairing-proof] revoked node authority rejected before connection admission")
         }
+        await revokedNode.disconnect()
     }
 
     private func expectSetupRecovery(
@@ -318,25 +280,5 @@ struct GatewayDiscoveryPairingNativeProofTests {
         #expect(state.remoteUrl == previousURL)
         #expect(OpenClawConfigFile.loadDict() as NSDictionary == previousConfig)
         #expect(GatewayDiscoveryPreferences.authenticatedTLSFingerprint() == previousFingerprint)
-    }
-
-    private func waitForReadyFile(_ url: URL, child: Process) async throws {
-        let deadline = ContinuousClock.now + .seconds(120)
-        while ContinuousClock.now < deadline {
-            if FileManager.default.fileExists(atPath: url.path) {
-                return
-            }
-            if !child.isRunning {
-                throw NSError(
-                    domain: "GatewayDiscoveryPairingNativeProof",
-                    code: Int(child.terminationStatus),
-                    userInfo: [NSLocalizedDescriptionKey: "The real Gateway exited before becoming ready"])
-            }
-            try await Task.sleep(for: .milliseconds(25))
-        }
-        throw NSError(
-            domain: "GatewayDiscoveryPairingNativeProof",
-            code: 1,
-            userInfo: [NSLocalizedDescriptionKey: "Timed out waiting for the real Gateway"])
     }
 }
