@@ -32,7 +32,10 @@ function object(value: unknown): Record<string, unknown> | undefined {
 
 function parseCommand(body: string): Command {
   const value = object(JSON.parse(body));
-  if (!value || !["mode", "snapshot", "rotate", "release", "setup"].includes(String(value.command))) {
+  if (
+    !value ||
+    !["mode", "snapshot", "rotate", "release", "setup"].includes(String(value.command))
+  ) {
     throw new Error("unknown fixture command");
   }
   if (value.command === "mode") {
@@ -70,7 +73,11 @@ function parseCommand(body: string): Command {
   return value as Command;
 }
 
-async function listen(server: http.Server | https.Server, port = 0, host = "127.0.0.1"): Promise<number> {
+async function listen(
+  server: http.Server | https.Server,
+  port = 0,
+  host = "127.0.0.1",
+): Promise<number> {
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
     server.listen(port, host, () => {
@@ -91,7 +98,7 @@ export async function startPairingTransportFixture(params: {
   issueSetup: (url: string, fingerprint: string) => Promise<Setup>;
   rotateGateway: () => Promise<void>;
 }) {
-  let activeCertificate = 0;
+  let activeCertificate: 0 | 1 = 0;
   let configuration: Command = { command: "mode", mode: "normal" };
   let upgrades = 0;
   let barrierReached = false;
@@ -140,7 +147,12 @@ export async function startPairingTransportFixture(params: {
         Array.isArray(value) ? value.join(", ") : (value ?? ""),
       ]),
     );
-    requests.push({ endpoint: label, method: request.method ?? "", path: request.url ?? "", headers });
+    requests.push({
+      endpoint: label,
+      method: request.method ?? "",
+      path: request.url ?? "",
+      headers,
+    });
     return label;
   }
 
@@ -164,7 +176,7 @@ export async function startPairingTransportFixture(params: {
     tlsConnections.alternate = 0;
   }
 
-  function installCertificate(index: number) {
+  function installCertificate(index: 0 | 1) {
     for (const server of [primary, primaryIPv6, alternate]) {
       server.setSecureContext(params.certificates[index].options);
       // Existing sessions must not resume across a certificate change.
@@ -173,12 +185,15 @@ export async function startPairingTransportFixture(params: {
   }
 
   function proxy(client: WebSocket, endpoint: Endpoint | "redirected", barrier: boolean) {
-    const upstream = new WebSocket(params.backendURL, {
+    const upstreamAgent = new https.Agent({
       ca: params.certificates[activeCertificate].options.cert,
       // Synthetic self-signed Gateway certificates have a fixture CN, not an IP SAN.
       // The explicit CA still verifies the actual backend certificate.
       checkServerIdentity: () => undefined,
       rejectUnauthorized: true,
+    });
+    const upstream = new WebSocket(params.backendURL, {
+      agent: upstreamAgent,
       handshakeTimeout: 10_000,
     });
     const pending: Array<{ data: RawData; binary: boolean }> = [];
@@ -209,6 +224,7 @@ export async function startPairingTransportFixture(params: {
       connections.delete(close);
       client.terminate();
       upstream.terminate();
+      upstreamAgent.destroy();
     };
     connections.add(close);
     client.once("close", close);
@@ -337,7 +353,9 @@ export async function startPairingTransportFixture(params: {
       if (mode === "cookie") {
         responseCookies.set(request, configuration.cookieName ?? "native-proof-response");
       }
-      wss.handleUpgrade(request, socket, head, (client) => proxy(client, label, mode === "barrier"));
+      wss.handleUpgrade(request, socket, head, (client) =>
+        proxy(client, label, mode === "barrier"),
+      );
     });
   }
 
@@ -374,7 +392,11 @@ export async function startPairingTransportFixture(params: {
             terminatePeers();
             configuration = command;
             installCertificate(
-              command.mode === "wrongCertificate" ? 1 - activeCertificate : activeCertificate,
+              command.mode === "wrongCertificate"
+                ? activeCertificate === 0
+                  ? 1
+                  : 0
+                : activeCertificate,
             );
             resetRecords();
           } else if (command.command === "rotate") {

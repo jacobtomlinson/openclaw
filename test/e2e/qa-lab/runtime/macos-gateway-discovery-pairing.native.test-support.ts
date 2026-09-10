@@ -26,8 +26,9 @@ if (!setupPath || !readyPath || !gatewayStateDir) {
   throw new Error("expected setup path, ready path, and Gateway state directory");
 }
 
+const configPath = path.join(gatewayStateDir, "openclaw.json");
 process.env.OPENCLAW_STATE_DIR = gatewayStateDir;
-process.env.OPENCLAW_CONFIG_PATH = path.join(gatewayStateDir, "openclaw.json");
+process.env.OPENCLAW_CONFIG_PATH = configPath;
 process.env.OPENCLAW_DISABLE_BONJOUR = "1";
 process.env.OPENCLAW_DISABLE_BUNDLED_PLUGINS = "1";
 process.env.OPENCLAW_SKIP_BROWSER_CONTROL_SERVER = "1";
@@ -78,13 +79,18 @@ if (!rotatedTls.enabled || !rotatedTls.fingerprintSha256 || !rotatedTls.tlsOptio
 
 async function writeConfig(certificatePath: string, privateKeyPath: string) {
   await fs.writeFile(
-    path.join(gatewayStateDir, "openclaw.json"),
+    configPath,
     `${JSON.stringify({
       gateway: {
         auth: { mode: "token", token: "native-proof-shared-token" },
         bind: "loopback",
         controlUi: { enabled: false },
-        tls: { enabled: true, autoGenerate: false, certPath: certificatePath, keyPath: privateKeyPath },
+        tls: {
+          enabled: true,
+          autoGenerate: false,
+          certPath: certificatePath,
+          keyPath: privateKeyPath,
+        },
       },
     })}\n`,
     { encoding: "utf8", mode: 0o600 },
@@ -125,11 +131,10 @@ try {
       server = await startGatewayServer(port, serverOptions);
     },
   });
-  await fs.writeFile(
-    setupPath,
-    `${JSON.stringify(transport.setup)}\n`,
-    { encoding: "utf8", mode: 0o600 },
-  );
+  await fs.writeFile(setupPath, `${JSON.stringify(transport.setup)}\n`, {
+    encoding: "utf8",
+    mode: 0o600,
+  });
   await fs.writeFile(readyPath, "ready\n", { encoding: "utf8", mode: 0o600 });
   await new Promise<void>((resolve) => {
     process.once("SIGINT", resolve);

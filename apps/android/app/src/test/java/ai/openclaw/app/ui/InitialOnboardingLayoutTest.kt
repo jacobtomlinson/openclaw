@@ -261,20 +261,34 @@ class InitialOnboardingLayoutTest {
       awaitUnapprovedRefreshCompletion()
       composeRule.onNodeWithText("Continue").assertIsEnabled().performClick()
 
-      fun awaitHeldRefresh() {
-        composeRule.waitUntil(timeoutMillis = 10_000) {
-          gateway.hasHeldNodeLists && runtime.nodesDevicesRefreshing.value
+      fun awaitHeldRefresh(startRefresh: () -> Unit) {
+        gateway.holdNodeLists()
+        val autoAdvance = composeRule.mainClock.autoAdvance
+        // The refresh starts on IO. Keep Compose's unobserved-refresh deadline from
+        // advancing ahead of that work before the held request establishes the boundary.
+        composeRule.mainClock.autoAdvance = false
+        try {
+          startRefresh()
+          composeRule.waitUntil(timeoutMillis = 10_000) {
+            gateway.hasHeldNodeLists && runtime.nodesDevicesRefreshing.value
+          }
+          // Drain Main's runtime-to-ViewModel collection before resuming Compose frames.
+          composeRule.runOnIdle { assertTrue(viewModel.nodesDevicesRefreshing.value) }
+        } finally {
+          composeRule.mainClock.autoAdvance = autoAdvance
         }
         composeRule.onNodeWithText("Checking approval…").assertIsDisplayed()
       }
 
       fun checkUnapprovedNode() {
-        gateway.holdNodeLists()
-        composeRule
-          .onNodeWithText("I have approved")
-          .assertIsEnabled()
-          .performSemanticsAction(SemanticsActions.OnClick) { click -> assertTrue(click()) }
-        awaitHeldRefresh()
+        // Finish navigation to this screen before the helper freezes Compose frames.
+        composeRule.onNodeWithText("I have approved").assertIsDisplayed().assertIsEnabled()
+        awaitHeldRefresh {
+          composeRule
+            .onNodeWithText("I have approved")
+            .assertIsEnabled()
+            .performSemanticsAction(SemanticsActions.OnClick) { click -> assertTrue(click()) }
+        }
         gateway.releaseNodeLists()
         awaitUnapprovedRefreshCompletion()
         composeRule.onNodeWithText("Still waiting for approval").assertIsDisplayed()
@@ -285,9 +299,7 @@ class InitialOnboardingLayoutTest {
       composeRule.onNodeWithText("Still waiting for approval").assertDoesNotExist()
 
       repeat(2) {
-        gateway.holdNodeLists()
-        composeRule.runOnIdle { runtime.refreshNodesDevices() }
-        awaitHeldRefresh()
+        awaitHeldRefresh { composeRule.runOnIdle { runtime.refreshNodesDevices() } }
         gateway.releaseNodeLists()
         awaitUnapprovedRefreshCompletion()
         composeRule.onNodeWithText("Still waiting for approval").assertDoesNotExist()

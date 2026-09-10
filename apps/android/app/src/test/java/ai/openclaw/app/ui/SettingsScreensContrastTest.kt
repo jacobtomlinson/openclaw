@@ -608,19 +608,36 @@ class SettingsScreensContrastTest {
     bindNodeRuntimeTestFixture(app, runtime)
     val model = MainViewModel(app, prefs, SavedStateHandle())
     models.put("approval-coherence", model)
+    // Finish bootstrap before foreground entry and screen composition each start their own refresh.
+    // A settled snapshot from one refresh does not mean another startup refresh has begun yet.
+    model.connect(gateway.endpoint)
+    composeRule.waitUntil(10_000) {
+      shadowOf(Looper.getMainLooper()).idle()
+      val inbox = runtime.execApprovalInbox.value
+      runtime.isConnected.value && !inbox.refreshing && inbox.approvals.singleOrNull()?.id == "approval-1"
+    }
+    val readsBeforeForeground = gateway.methods.count { it == "approval.get" }
     model.setForeground(true)
+    composeRule.waitUntil(10_000) {
+      shadowOf(Looper.getMainLooper()).idle()
+      val foregroundReadObserved = gateway.methods.count { it == "approval.get" } > readsBeforeForeground
+      val inbox = runtime.execApprovalInbox.value
+      foregroundReadObserved && !inbox.refreshing && inbox.approvals.singleOrNull()?.id == "approval-1"
+    }
     val evidence = File("build/outputs/approval-inbox-coherence", UUID.randomUUID().toString())
     check(!evidence.exists() && evidence.mkdirs())
+    val readsBeforeScreen = gateway.methods.count { it == "approval.get" }
     composeRule.setContent {
       ClawDesignTheme(dark = false) {
         SettingsDetailScreen(viewModel = model, route = SettingsRoute.Approvals, onBack = {})
       }
     }
-    composeRule.runOnIdle { model.connect(gateway.endpoint) }
     composeRule.waitUntil(10_000) {
-      composeRule.onAllNodesWithText("Refresh").fetchSemanticsNodes().any {
-        SemanticsActions.OnClick in it.config && SemanticsProperties.Disabled !in it.config
-      } && composeRule.onAllNodesWithText("echo ok").fetchSemanticsNodes().isNotEmpty() &&
+      gateway.methods.count { it == "approval.get" } > readsBeforeScreen &&
+        !runtime.execApprovalInbox.value.refreshing &&
+        composeRule.onAllNodesWithText("Refresh").fetchSemanticsNodes().any {
+          SemanticsActions.OnClick in it.config && SemanticsProperties.Disabled !in it.config
+        } && composeRule.onAllNodesWithText("echo ok").fetchSemanticsNodes().isNotEmpty() &&
         !model.execApprovalInbox.value.refreshing && model.execApprovalInbox.value.approvals
           .singleOrNull()
           ?.id == "approval-1"
