@@ -220,7 +220,8 @@ struct GatewayDiscoveryReconnectTests {
                         return nil
                     })
             }
-            #expect(try await task.value == nil)
+            let result = try await task.value
+            #expect(result == nil)
         }
     }
 }
