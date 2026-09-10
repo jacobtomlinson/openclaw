@@ -8,6 +8,7 @@ extension GatewayDiscoveryPairingNativeProofTests {
     func proveCertificateRotation(_ fixture: GatewayPairingNativeProofFixture) async throws {
         try await fixture.command("mode", fields: ["mode": "normal"])
         let setupA = try await fixture.command("setup").setup
+        print("[pairing-proof] rotation starting full-access pairing at certificate A")
         let routeA = try await GatewayDiscoveryPairing.authenticate(setupInput: setupA.input)
         let ownerA = try #require(GatewayDiscoveryPreferences.tlsDeviceAuthGatewayID(routeA.tlsFingerprint))
         let identity = try #require(DeviceIdentityStore.loadOrCreatePersisted(profile: .primary))
@@ -19,6 +20,7 @@ extension GatewayDiscoveryPairingNativeProofTests {
             stableID: stableID, route: routeA, state: stateA, lease: fence.begin(), fence: fence) == .applied)
         let oldTokens = try self.proofTokens(fingerprint: routeA.tlsFingerprint)
         let oldConfig = OpenClawConfigFile.loadDict() as NSDictionary
+        print("[pairing-proof] rotation published certificate A with both active device roles")
 
         let rotated = try await fixture.command("rotate")
         var setupB = rotated.setup
@@ -26,6 +28,7 @@ extension GatewayDiscoveryPairingNativeProofTests {
         #expect(setupB.tlsFingerprint != setupA.tlsFingerprint)
         let ownerB = try #require(GatewayDiscoveryPreferences.tlsDeviceAuthGatewayID(setupB.tlsFingerprint))
         #expect(ownerB != ownerA)
+        print("[pairing-proof] rotation replaced certificate A with B on the same Gateway")
         // Change the resolved spelling as well as the certificate: publication must commit the URL/pin bundle.
         var moved = try #require(URLComponents(url: setupB.url, resolvingAgainstBaseURL: false))
         moved.host = "localhost"
@@ -86,6 +89,7 @@ extension GatewayDiscoveryPairingNativeProofTests {
                 deviceId: identity.deviceId, role: role, gatewayID: ownerB, profile: .primary) == nil)
         }
 
+        print("[pairing-proof] rotation rejected the saved pin and preserved A after cancelled and invalid setup")
         try await self.completeRotation(
             fixture, setup: setupB, oldRoute: routeA, oldConfig: oldConfig,
             oldTokens: oldTokens, discovered: discovered, identity: identity)
@@ -159,6 +163,7 @@ extension GatewayDiscoveryPairingNativeProofTests {
         #expect(authenticated.url == setup.url)
         #expect(authenticated.tlsFingerprint == setup.tlsFingerprint.lowercased())
         let newTokens = try self.proofTokens(fingerprint: setup.tlsFingerprint)
+        print("[pairing-proof] rotation received the held bootstrap reply and persisted both B roles")
         self.expectRotationPreserved(state, route: oldRoute, stableID: discovered.stableID, config: oldConfig)
         #expect(saves.isEmpty)
         #expect(try self.proofTokens(fingerprint: oldRoute.tlsFingerprint) == oldTokens)

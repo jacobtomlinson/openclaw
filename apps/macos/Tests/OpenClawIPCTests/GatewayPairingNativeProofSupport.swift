@@ -61,6 +61,21 @@ final class GatewayPairingNativeProofFixture {
         self.controlSession = URLSession(configuration: configuration)
     }
 
+    static func withFreshGateway(
+        _ operation: @MainActor (GatewayPairingNativeProofFixture) async throws -> Void) async throws
+    {
+        let fixture = try await self.start()
+        let outcome: Result<Void, Error>
+        do {
+            try await operation(fixture)
+            outcome = .success(())
+        } catch {
+            outcome = .failure(error)
+        }
+        await fixture.stop()
+        try outcome.get()
+    }
+
     static func start() async throws -> GatewayPairingNativeProofFixture {
         let environment = ProcessInfo.processInfo.environment
         let statePath = try #require(environment["OPENCLAW_STATE_DIR"])

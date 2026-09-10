@@ -10,17 +10,14 @@ import Testing
 struct GatewayDiscoveryPairingNativeProofTests {
     @Test(.enabled(if: ProcessInfo.processInfo.environment["OPENCLAW_MACOS_GATEWAY_PAIRING_PROOF"] == "1"))
     func `mismatched discovery is denied before full access pairing and routed reconnects succeed`() async throws {
-        let fixture = try await GatewayPairingNativeProofFixture.start()
-        let outcome: Result<Void, Error>
-        do {
+        try await GatewayPairingNativeProofFixture.withFreshGateway { fixture in
             try await self.provePairingAndRevocation(fixture)
-            try await self.proveCertificateRotation(fixture)
-            outcome = .success(())
-        } catch {
-            outcome = .failure(error)
         }
-        await fixture.stop()
-        try outcome.get()
+        // Revoked roles require owner approval. Rotation starts with its own active pairing,
+        // then keeps that Gateway's device state intact through the certificate replacement.
+        try await GatewayPairingNativeProofFixture.withFreshGateway { fixture in
+            try await self.proveCertificateRotation(fixture)
+        }
     }
 
     private func provePairingAndRevocation(_ fixture: GatewayPairingNativeProofFixture) async throws {
