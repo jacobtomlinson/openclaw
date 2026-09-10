@@ -30,7 +30,10 @@ struct MacNodeGatewayTLSSessionCache {
         if let cachedKey = self.cachedKey, cachedKey == key, let cachedBox = self.cachedBox {
             return cachedBox
         }
-        let box = WebSocketSessionBox(session: GatewayTLSPinningSession(params: params))
+        let box = WebSocketSessionBox(session: GatewayTLSPinningSession(
+            params: params,
+            allowsRedirects: false,
+            allowsStoredCredentials: false))
         self.cachedKey = key
         self.cachedBox = box
         return box

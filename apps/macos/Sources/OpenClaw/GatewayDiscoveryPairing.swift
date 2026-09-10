@@ -5,6 +5,7 @@ enum GatewayDiscoveryPairingError: LocalizedError, Equatable {
     case invalidSetupCode
     case secureSetupRequired
     case deviceCredentialNotIssued
+    case savedDeviceCredentialUnavailable
     case configSaveFailed
     case gatewayTooOld
 
@@ -17,6 +18,8 @@ enum GatewayDiscoveryPairingError: LocalizedError, Equatable {
         case .deviceCredentialNotIssued:
             "The Gateway authenticated, but did not issue both reusable device credentials. " +
                 "Create a fresh full-access setup code."
+        case .savedDeviceCredentialUnavailable:
+            "Saved device access is missing or no longer accepted. Create a fresh full-access setup code."
         case .configSaveFailed:
             "The Gateway authenticated, but OpenClaw could not save the new route. " +
                 "Your existing connection was preserved."
@@ -72,6 +75,42 @@ enum GatewayDiscoveryPairing {
             throw GatewayDiscoveryPairingError.secureSetupRequired
         }
 
+        try await self.authenticateRole(
+            url: url,
+            fingerprint: fingerprint,
+            deviceAuthGatewayID: deviceAuthGatewayID,
+            role: "node",
+            bootstrapToken: bootstrapToken)
+        return AuthenticatedGatewayRoute(url: url, tlsFingerprint: fingerprint)
+    }
+
+    /// Discovery supplies only a candidate address. The saved pin is enforced on
+    /// each socket before either role's certificate-owned credential can be sent.
+    static func reconnect(url: URL, tlsFingerprint: String) async throws -> AuthenticatedGatewayRoute {
+        guard url.scheme?.lowercased() == "wss",
+              let owner = GatewayDiscoveryPreferences.tlsDeviceAuthGatewayID(tlsFingerprint)
+        else {
+            throw GatewayDiscoveryPairingError.secureSetupRequired
+        }
+        for role in ["operator", "node"] {
+            try Task.checkCancellation()
+            try await self.authenticateRole(
+                url: url,
+                fingerprint: tlsFingerprint,
+                deviceAuthGatewayID: owner,
+                role: role,
+                bootstrapToken: nil)
+        }
+        return AuthenticatedGatewayRoute(url: url, tlsFingerprint: tlsFingerprint)
+    }
+
+    private static func authenticateRole(
+        url: URL,
+        fingerprint: String,
+        deviceAuthGatewayID: String,
+        role: String,
+        bootstrapToken: String?) async throws
+    {
         let tls = GatewayTLSParams(
             required: true,
             expectedFingerprint: fingerprint,
@@ -81,31 +120,44 @@ enum GatewayDiscoveryPairing {
             url: url,
             token: nil,
             bootstrapToken: bootstrapToken,
-            session: WebSocketSessionBox(session: GatewayTLSPinningSession(params: tls)),
+            password: nil,
+            // Pairing authority belongs to this exact endpoint and its explicit
+            // credentials; redirects, HTTP credentials, and cookies cannot extend it.
+            session: WebSocketSessionBox(session: GatewayTLSPinningSession(
+                params: tls,
+                allowsRedirects: false,
+                allowsStoredCredentials: false)),
             connectOptions: GatewayConnectOptions(
-                role: "node",
-                scopes: [],
+                role: role,
+                scopes: role == "operator" ? GatewayChannelActor.defaultOperatorConnectScopes : [],
                 caps: [],
                 commands: [],
                 permissions: [:],
                 clientId: "openclaw-macos",
-                clientMode: "node",
+                clientMode: role == "operator" ? "ui" : "node",
                 clientDisplayName: InstanceIdentity.displayName,
                 deviceIdentityProfile: .primary,
                 includeDeviceIdentity: true,
-                allowStoredDeviceAuth: false,
+                allowStoredDeviceAuth: bootstrapToken == nil,
                 deviceAuthGatewayID: deviceAuthGatewayID))
         do {
             try await channel.connect()
             let roles = await channel.currentDeviceAuthRoles()
-            guard roles.persisted.isSuperset(of: ["node", "operator"]) else {
-                throw GatewayDiscoveryPairingError.deviceCredentialNotIssued
+            if bootstrapToken != nil {
+                guard roles.persisted.isSuperset(of: ["node", "operator"]) else {
+                    throw GatewayDiscoveryPairingError.deviceCredentialNotIssued
+                }
+            } else {
+                guard await channel.authSource() == .deviceToken,
+                      roles.persisted.contains(role)
+                else {
+                    throw GatewayDiscoveryPairingError.savedDeviceCredentialUnavailable
+                }
             }
             await channel.shutdown()
-            return AuthenticatedGatewayRoute(url: url, tlsFingerprint: fingerprint)
         } catch let error as GatewayConnectAuthError {
             await channel.shutdown()
-            if let pairingError = Self.classifyServerRejection(error.message) {
+            if bootstrapToken != nil, let pairingError = Self.classifyServerRejection(error.message) {
                 throw pairingError
             }
             throw error

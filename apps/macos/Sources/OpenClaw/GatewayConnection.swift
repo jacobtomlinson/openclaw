@@ -359,7 +359,12 @@ actor GatewayConnection: Observable {
             return { _ in sessionBox }
         }
         return { route in
-            route.map { WebSocketSessionBox(session: GatewayTLSPinningSession(params: $0.params)) }
+            route.map {
+                WebSocketSessionBox(session: GatewayTLSPinningSession(
+                    params: $0.params,
+                    allowsRedirects: false,
+                    allowsStoredCredentials: false))
+            }
         }
     }
 

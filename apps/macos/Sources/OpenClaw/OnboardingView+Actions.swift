@@ -36,12 +36,19 @@ extension OnboardingView {
     }
 
     func selectRemoteGateway(_ gateway: GatewayDiscoveryModel.DiscoveredGateway) {
-        guard let setupInput = GatewayDiscoverySelectionSupport.requestSetupCode(for: gateway) else { return }
         let lease = gatewaySelectionFence.begin()
         Task { @MainActor in
             let route: AuthenticatedGatewayRoute
             do {
-                route = try await GatewayDiscoveryPairing.authenticate(setupInput: setupInput)
+                guard let authenticated = try await GatewayDiscoverySelectionSupport.authenticateSelection(
+                    for: gateway,
+                    lease: lease,
+                    fence: self.gatewaySelectionFence)
+                else {
+                    _ = self.gatewaySelectionFence.consume(lease)
+                    return
+                }
+                route = authenticated
             } catch {
                 guard self.gatewaySelectionFence.consume(lease) else { return }
                 GatewayDiscoverySelectionSupport.presentError(error)

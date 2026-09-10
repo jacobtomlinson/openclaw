@@ -269,13 +269,25 @@ To configure from the UI instead:
 3. Hit **Test remote**. The app checks SSH reachability when applicable, then authenticates and calls the Gateway health RPC. Connection, authentication, and pairing errors appear here; this check does not require a CLI on this Mac.
 4. Health checks and WebChat now run through the selected transport automatically.
 
-For a Gateway shown in the nearby-discovery list, select it and paste a fresh
+For a new Gateway shown in the nearby-discovery list, select it and paste a fresh
 full-access setup code from **Control UI -> Settings -> Devices -> Pair device**
-on that Gateway. The Mac verifies the code's TLS certificate
-pin before sending its short-lived bootstrap token, stores the resulting
-device-scoped credential, and then saves the direct `wss://` route. Bonjour
-advertisements alone never authorize a route or receive an existing Gateway
-token. A new Gateway identity requires a new setup code.
+on that Gateway. The Mac verifies the code's TLS certificate pin before sending
+its short-lived bootstrap token, stores the resulting operator and node device
+credentials, and then saves the direct `wss://` route.
+
+Selecting the currently remembered paired Gateway again, in Connection or
+onboarding, reconnects without another setup code. The Mac uses its saved
+certificate pin to verify the discovered address, even if that address has
+changed, and authenticates both device roles before saving the route. Bonjour
+advertisements alone never establish trust, replace the saved pin, authorize a
+plaintext connection, or receive a shared Gateway token or password.
+
+The app remembers one preferred discovery identity. Selecting a different
+Gateway replaces that remembered identity; returning to an earlier Gateway
+requires a setup code again. A changed certificate or missing or revoked device
+access also offers setup-code recovery. Canceling recovery or a failed pairing
+preserves the existing route. Dismissing the view or choosing another connection
+prevents an outstanding attempt from publishing a route or showing a late prompt.
 
 Nearby setup-code pairing requires a Gateway release that supports the macOS
 full-access bootstrap handoff. Gateways at `v2026.9.3` or older do not provide

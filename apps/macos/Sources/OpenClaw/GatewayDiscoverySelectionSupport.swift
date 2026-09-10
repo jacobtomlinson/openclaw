@@ -23,6 +23,10 @@ final class GatewayDiscoverySelectionFence {
         return hadActiveLease
     }
 
+    func isCurrent(_ lease: Lease) -> Bool {
+        self.activeLease == lease
+    }
+
     func consume(_ lease: Lease) -> Bool {
         guard self.activeLease == lease else { return false }
         self.activeLease = nil
@@ -38,14 +42,80 @@ enum GatewayDiscoverySelectionApplyResult: Equatable {
 
 @MainActor
 enum GatewayDiscoverySelectionSupport {
-    static func requestSetupCode(for gateway: GatewayDiscoveryModel.DiscoveredGateway) -> String? {
+    /// There is one saved discovery identity, not a trust registry. A matching
+    /// discovery id only selects the saved pin to try; it never authenticates the
+    /// advertised address. Ignore advertised TLS metadata and always require WSS.
+    static func savedReconnectCandidate(
+        for gateway: GatewayDiscoveryModel.DiscoveredGateway) -> (url: URL, tlsFingerprint: String)?
+    {
+        guard gateway.stableID == GatewayDiscoveryPreferences.preferredStableID(),
+              let fingerprint = GatewayDiscoveryPreferences.authenticatedTLSFingerprint(),
+              let address = GatewayDiscoveryHelpers.directGatewayUrl(
+                  serviceHost: gateway.serviceHost,
+                  servicePort: gateway.servicePort,
+                  gatewayTls: true),
+              let url = URL(string: address), url.scheme?.lowercased() == "wss"
+        else { return nil }
+        return (url, fingerprint)
+    }
+
+    /// Both nearby-selection entry points share reconnect, recovery, and prompt
+    /// fencing. No route is published until the caller consumes this same lease.
+    static func authenticateSelection(
+        for gateway: GatewayDiscoveryModel.DiscoveredGateway,
+        lease: GatewayDiscoverySelectionFence.Lease,
+        fence: GatewayDiscoverySelectionFence,
+        reconnect: @MainActor (URL, String) async throws -> AuthenticatedGatewayRoute = {
+            try await GatewayDiscoveryPairing.reconnect(url: $0, tlsFingerprint: $1)
+        },
+        requestSetup: @MainActor (GatewayDiscoveryModel.DiscoveredGateway, Error?) -> String? = {
+            GatewayDiscoverySelectionSupport.requestSetupCode(for: $0, reconnectError: $1)
+        },
+        pair: @MainActor (String) async throws -> AuthenticatedGatewayRoute = {
+            try await GatewayDiscoveryPairing.authenticate(setupInput: $0)
+        }) async throws -> AuthenticatedGatewayRoute?
+    {
+        guard fence.isCurrent(lease), !Task.isCancelled else { return nil }
+        var reconnectError: Error?
+        if let candidate = self.savedReconnectCandidate(for: gateway) {
+            do {
+                let route = try await reconnect(candidate.url, candidate.tlsFingerprint)
+                guard fence.isCurrent(lease), !Task.isCancelled else { return nil }
+                return route
+            } catch {
+                reconnectError = error
+            }
+        }
+        guard fence.isCurrent(lease), !Task.isCancelled else { return nil }
+        let setupInput = requestSetup(gateway, reconnectError)
+        // A modal prompt pumps the main run loop: dismissal or a newer selection
+        // can invalidate the lease while it is open, too.
+        guard fence.isCurrent(lease), !Task.isCancelled, let setupInput else { return nil }
+        do {
+            let route = try await pair(setupInput)
+            guard fence.isCurrent(lease), !Task.isCancelled else { return nil }
+            return route
+        } catch {
+            guard fence.isCurrent(lease), !Task.isCancelled else { return nil }
+            throw error
+        }
+    }
+
+    static func requestSetupCode(
+        for gateway: GatewayDiscoveryModel.DiscoveredGateway,
+        reconnectError: Error? = nil) -> String?
+    {
         let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 420, height: 24))
         field.placeholderString = "Paste the setup code from this Gateway"
         field.setAccessibilityLabel("Gateway setup code")
 
         let alert = NSAlert()
         alert.messageText = "Authenticate \(gateway.displayName)"
-        alert.informativeText =
+        let recovery = reconnectError.map {
+            "The saved pairing could not reconnect: \($0.localizedDescription) " +
+                "Check that the Gateway is reachable, or pair again with a fresh setup code.\n\n"
+        } ?? ""
+        alert.informativeText = recovery +
             "Bonjour can locate a Gateway, but cannot prove its identity. " +
             "On that Gateway, open Control UI → Settings → Devices → Pair device, keep Full access, " +
             "and create a setup code. " +

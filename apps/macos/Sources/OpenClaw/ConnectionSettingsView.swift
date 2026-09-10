@@ -89,6 +89,7 @@ struct ConnectionSettingsView: View {
             self.refreshGatewayStatus()
             self.gatewayDiscovery.start()
         } else {
+            self.invalidateGatewayPairing()
             self.gatewayDiscovery.stop()
         }
     }
@@ -563,13 +564,20 @@ extension ConnectionSettingsView {
     }
 
     private func applyDiscoveredGateway(_ gateway: GatewayDiscoveryModel.DiscoveredGateway) {
-        guard let setupInput = GatewayDiscoverySelectionSupport.requestSetupCode(for: gateway) else { return }
         let lease = self.gatewaySelectionFence.begin()
         self.remoteStatus = .checking
         Task { @MainActor in
             let route: AuthenticatedGatewayRoute
             do {
-                route = try await GatewayDiscoveryPairing.authenticate(setupInput: setupInput)
+                guard let authenticated = try await GatewayDiscoverySelectionSupport.authenticateSelection(
+                    for: gateway,
+                    lease: lease,
+                    fence: self.gatewaySelectionFence)
+                else {
+                    if self.gatewaySelectionFence.consume(lease) { self.remoteStatus = .idle }
+                    return
+                }
+                route = authenticated
             } catch {
                 guard self.gatewaySelectionFence.consume(lease) else { return }
                 self.remoteStatus = .failed(error.localizedDescription)
