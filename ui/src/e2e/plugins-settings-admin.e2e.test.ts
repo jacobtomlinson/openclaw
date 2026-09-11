@@ -580,16 +580,18 @@ suite.define(() => {
         });
         await openWorkboard(page, suite.server.baseUrl);
 
-        const toggle = page.locator("wa-switch").filter({ hasText: "Enable or disable Workboard" });
         const connectCount = (await gateway.getRequests("connect")).length;
+        const toggle = page.locator("wa-switch").filter({ hasText: "Enable or disable Workboard" });
         await toggle.click();
-        await gateway.waitForRequest("plugins.setEnabled");
-        await page.getByRole("status").filter({ hasText: "Disabled Workboard." }).waitFor();
-        // The committed notice is briefly hidden while the mutation reconnects to refresh hello.
         await gateway.waitForRequest("connect", { after: connectCount });
+        await gateway.waitForRequest("plugins.setEnabled");
         await expect
           .poll(() =>
-            page.locator(".plugins-row-message").filter({ hasText: "Disabled Workboard." }).count(),
+            page
+              .getByRole("status")
+              .filter({ hasText: "Disabled Workboard." })
+              .and(page.locator(".plugins-row-message:visible"))
+              .count(),
           )
           .toBe(1);
 
