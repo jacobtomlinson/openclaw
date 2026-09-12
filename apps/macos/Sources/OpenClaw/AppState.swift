@@ -1159,16 +1159,9 @@ extension AppState {
 }
 
 extension AppState {
-    struct PrimaryGatewayConfiguration: Equatable, Sendable {
-        let url: URL
-        let token: String?
-        let tlsFingerprint: String?
-    }
-
     private static func syncedGatewayRoot(
         currentRoot: [String: Any],
-        draft: GatewayConfigSyncDraft,
-        primaryGateway: PrimaryGatewayConfiguration? = nil)
+        draft: GatewayConfigSyncDraft)
         -> (root: [String: Any], changed: Bool, removesGatewayMode: Bool)
     {
         var root = currentRoot
@@ -1214,15 +1207,6 @@ extension AppState {
                     dirtyFields: draft.dirtyFields))
             remote = updated.remote
             remoteChanged = updated.changed
-        }
-        if let primaryGateway {
-            // An explicit Gateway replacement owns the complete auth bundle;
-            // an old password must never reach the new Gateway's native dashboard.
-            remoteChanged = Self.updateGatewayString(&remote, key: "password", value: nil) || remoteChanged
-            remoteChanged = Self.updateGatewayString(
-                &remote,
-                key: "tlsFingerprint",
-                value: primaryGateway.tlsFingerprint) || remoteChanged
         }
         if remoteChanged {
             if remote.isEmpty {
@@ -1305,22 +1289,40 @@ extension AppState {
         }
     }
 
-    @discardableResult
-    func syncGatewayConfigNow() -> Bool {
-        self.syncGatewayConfigNow(primaryGateway: nil)
+    struct PrimaryGatewaySnapshot {
+        let root: [String: Any]
+        fileprivate let routingGeneration: UInt64
+        fileprivate let gatewayFingerprint: Data?
     }
 
-    @discardableResult
-    func replacePrimaryGateway(_ configuration: PrimaryGatewayConfiguration) -> Bool {
-        self.syncGatewayConfigNow(primaryGateway: configuration)
+    func primaryGatewaySnapshot() -> PrimaryGatewaySnapshot {
+        let root = OpenClawConfigFile.loadDict()
+        return PrimaryGatewaySnapshot(
+            root: root,
+            routingGeneration: self.gatewayRoutingGeneration,
+            gatewayFingerprint: Self.gatewayRoutingFingerprint(root))
     }
 
-    func setPrimaryGateway(_ configuration: PrimaryGatewayControlConfiguration) throws {
+    private static func gatewayRoutingFingerprint(_ root: [String: Any]) -> Data? {
+        self.configFingerprint(["gateway": root["gateway"] ?? [:]])
+    }
+
+    func setPrimaryGateway(
+        _ configuration: PrimaryGatewayControlConfiguration,
+        replacing snapshot: PrimaryGatewaySnapshot? = nil) throws
+    {
         guard self.gatewayConfigSyncIsEnabled, !self.isInitializing else {
             throw PrimaryGatewayControlError.unavailable
         }
         let previousSyncState = self.gatewayConfigSyncState
         let currentRoot = OpenClawConfigFile.loadDict()
+        if let snapshot {
+            // File watcher delivery can lag an external edit. Validate the same
+            // canonical Gateway bundle that this write will replace, not only UI state.
+            guard self.gatewayRoutingGeneration == snapshot.routingGeneration,
+                  Self.gatewayRoutingFingerprint(currentRoot) == snapshot.gatewayFingerprint
+            else { throw PrimaryGatewayControlError.conflictingEdits }
+        }
         self.applyConfigOverrides(currentRoot)
         guard self.conflictedGatewayConfigFields.isEmpty else {
             throw PrimaryGatewayControlError.conflictingEdits
@@ -1370,49 +1372,37 @@ extension AppState {
         }
     }
 
-    private func syncGatewayConfigNow(primaryGateway: PrimaryGatewayConfiguration?) -> Bool {
+    @discardableResult
+    func syncGatewayConfigNow() -> Bool {
         guard self.gatewayConfigSyncIsEnabled, !self.isInitializing else { return true }
-        let previousSyncState = self.gatewayConfigSyncState
         self.setGatewayConfigSyncState(.pending)
 
         let currentRoot = OpenClawConfigFile.loadDict()
         self.applyConfigOverrides(currentRoot)
         guard self.conflictedGatewayConfigFields.isEmpty else { return false }
 
-        var draft = self.gatewayConfigDraft()
-        if let primaryGateway {
-            draft.connectionMode = .remote
-            draft.remoteTransport = .direct
-            draft.remoteUrl = primaryGateway.url.absoluteString
-            draft.remoteToken = primaryGateway.token ?? ""
-            draft.dirtyFields.formUnion([.mode, .remoteTransport, .remoteUrl, .remoteToken])
-        }
+        let draft = self.gatewayConfigDraft()
         guard Self.gatewayDraftCanPersist(draft) else {
-            self.setGatewayConfigSyncState(primaryGateway == nil ? .failed : previousSyncState)
+            self.setGatewayConfigSyncState(.failed)
             return false
         }
 
         // Keep app-only connection settings local to avoid overwriting remote gateway config.
         let synced = Self.syncedGatewayRoot(
             currentRoot: currentRoot,
-            draft: draft,
-            primaryGateway: primaryGateway)
+            draft: draft)
         guard !synced.changed || self.gatewayConfigSaver(synced.root, synced.removesGatewayMode) else {
-            self.setGatewayConfigSyncState(primaryGateway == nil ? .failed : previousSyncState)
-            let write = primaryGateway == nil ? "connection draft sync" : "primary Gateway replacement"
-            Self.logger
-                .warning("\(write) failed: configuration saver rejected the write; see config log for the reason")
+            self.setGatewayConfigSyncState(.failed)
+            Self.logger.warning("connection draft sync failed: config saver rejected write; see config log for reason")
             return false
         }
         self.acknowledgeGatewayConfigPersistence(draft, root: synced.root)
-        if primaryGateway != nil || draft.clearsPrimaryGateway {
-            // Publish the selection only after its endpoint and credentials commit.
+        if draft.clearsPrimaryGateway {
+            // Publish the cleared selection only after its config commits.
             if synced.changed, !self.isPreview {
                 WebChatManager.shared.resetPrimaryConnections()
             }
-            let fields = draft.clearsPrimaryGateway
-                ? Set(GatewayConfigField.allCases) : Self.gatewayConfigFieldsPersisted(by: draft)
-            self.applyGatewayConfigView(synced.root, forcing: fields)
+            self.applyGatewayConfigView(synced.root, forcing: Set(GatewayConfigField.allCases))
         }
         self.lastConfigFingerprint = Self.configFingerprint(synced.root)
         self.setGatewayConfigSyncState(.current)
