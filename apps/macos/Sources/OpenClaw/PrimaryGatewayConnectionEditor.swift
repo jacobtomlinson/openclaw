@@ -64,16 +64,17 @@ final class PrimaryGatewayConnectionDraft {
         let resolution = GatewayRemoteConfig.resolveTransportResolution(root: root)
         self.transport = ConnectionModeResolver.resolve(root: root).mode == .unconfigured ? .direct : resolution
             .transport
-        let input = resolution.directURL?.absoluteString ?? GatewayRemoteConfig.resolveUrlString(root: root) ?? ""
+        let input = resolution.transport == .direct
+            ? resolution.directURL?.absoluteString ?? GatewayRemoteConfig.resolveUrlString(root: root) ?? "" : ""
         self.input = input
         self.originalInput = input
         self.originalFingerprint = remote["tlsFingerprint"] as? String
         self.sshTarget = settings.target
-        let defaultPort = GatewayEnvironment.gatewayPort(root: root)
-        self.remotePort = String(RemotePortTunnel.resolveRemotePortOverride(
-            defaultRemotePort: defaultPort,
-            for: CommandResolver.parseSSHTarget(settings.target)?.host ?? "",
-            root: root) ?? defaultPort)
+        self.remotePort = settings.mode == .remote && resolution.transport == .ssh
+            ? String(RemotePortTunnel.ports(
+                root: root,
+                sshHost: CommandResolver.parseSSHTarget(settings.target)?.host ?? "").remote)
+            : "18789"
         self.token = remote["token"] as? String ?? ""
         self.password = remote["password"] as? String ?? ""
         self.unsupportedToken = remote["token"] != nil && !(remote["token"] is String)

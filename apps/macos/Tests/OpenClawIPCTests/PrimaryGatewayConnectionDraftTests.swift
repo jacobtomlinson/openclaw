@@ -12,13 +12,15 @@ struct PrimaryGatewayConnectionDraftTests {
     private func withSavedConnection(
         remote: [String: Any]? = nil,
         localPort: Int? = nil,
+        hostsLocalGateway: Bool = false,
         _ body: @MainActor (AppState, [String: Any]) async throws -> Void) async throws
     {
         let directory = try makeTempDirForTests()
         defer { try? FileManager.default.removeItem(at: directory) }
-        try await TestIsolation.withEnvValues([
-            "OPENCLAW_CONFIG_PATH": directory.appendingPathComponent("openclaw.json").path,
-        ]) {
+        try await TestIsolation.withIsolatedState(
+            env: ["OPENCLAW_CONFIG_PATH": directory.appendingPathComponent("openclaw.json").path],
+            defaults: ["gatewayPort": nil, hostsLocalGatewayWithRemotePrimaryKey: hostsLocalGateway])
+        {
             var gateway: [String: Any] = [
                 "mode": "remote",
                 "remote": remote ?? [
@@ -133,11 +135,14 @@ struct PrimaryGatewayConnectionDraftTests {
         }
     }
 
-    @Test func `SSH credential edits retain separate local and remote port settings`() async throws {
+    @Test(arguments: [29876, 29875], [false, true])
+    func `SSH credential edits retain separate local and remote port settings`(
+        localGatewayPort: Int, hostsLocalGateway: Bool) async throws
+    {
         try await self.withSavedConnection(remote: [
             "transport": "ssh", "sshTarget": "user@saved.example.test:2222",
             "url": "ws://127.0.0.1:29876", "remotePort": 18789, "token": "saved-test-token",
-        ], localPort: 29876) { state, _ in
+        ], localPort: localGatewayPort, hostsLocalGateway: hostsLocalGateway) { state, before in
             let draft = PrimaryGatewayConnectionDraft(state: state)
             #expect(draft.remotePort == "18789")
             draft.token = "replacement-test-token"
@@ -145,10 +150,57 @@ struct PrimaryGatewayConnectionDraftTests {
             try draft.save()
 
             let root = OpenClawConfigFile.loadDict()
-            #expect(OpenClawConfigFile.gatewayPort(root: root) == 29876)
+            #expect(OpenClawConfigFile.gatewayPort(root: root) == localGatewayPort)
             #expect(GatewayRemoteConfig.resolveUrlString(root: root) == "ws://127.0.0.1:29876")
             #expect(GatewayRemoteConfig.resolveRemotePort(root: root) == 18789)
             #expect(GatewayRemoteConfig.resolveTokenString(root: root) == "replacement-test-token")
+            #expect(GatewayDiscoveryPreferences.deviceAuthGatewayID(root: root) ==
+                GatewayDiscoveryPreferences.deviceAuthGatewayID(root: before))
+        }
+    }
+
+    @Test(arguments: [18789, 29875, 65535])
+    func `switching from direct to SSH preserves the hosted local Gateway port`(localGatewayPort: Int) async throws {
+        try await self.withSavedConnection(localPort: localGatewayPort, hostsLocalGateway: true) { state, _ in
+            let draft = PrimaryGatewayConnectionDraft(state: state)
+            draft.transport = .ssh
+            draft.sshTarget = "user@new.example.test:2222"
+            #expect(draft.remotePort == "18789")
+            draft.token = "new-test-token"
+
+            try draft.save()
+
+            let root = OpenClawConfigFile.loadDict()
+            #expect(state.hostsLocalGatewayWithRemotePrimary)
+            #expect(OpenClawConfigFile.gatewayPort(root: root) == localGatewayPort)
+            #expect(RemotePortTunnel.localPort(root: root) != localGatewayPort)
+            #expect(GatewayRemoteConfig.resolveRemotePort(root: root) == 18789)
+            #expect(GatewayRemoteConfig.resolveTokenString(root: root) == "new-test-token")
+            #expect(GatewayRemoteConfig.resolvePasswordString(root: root) == nil)
+        }
+    }
+
+    @Test(arguments: ["ws://127.0.0.1:29876", "wss://localhost:29876"])
+    func `switching from SSH to direct requires a trusted replacement address`(tunnelURL: String) async throws {
+        try await self.withSavedConnection(remote: [
+            "transport": "ssh", "sshTarget": "user@saved.example.test:2222",
+            "url": tunnelURL, "remotePort": 18789, "token": "saved-test-token",
+        ]) { state, before in
+            let draft = PrimaryGatewayConnectionDraft(state: state)
+            draft.transport = .direct
+            #expect(draft.input.isEmpty)
+            #expect(throws: Error.self) { try draft.save() }
+            #expect(NSDictionary(dictionary: OpenClawConfigFile.loadDict()["gateway"] as? [String: Any] ?? [:])
+                .isEqual(to: before["gateway"] as? [String: Any] ?? [:]))
+
+            draft.input = "wss://new.example.test/"
+            draft.token = "new-test-token"
+            try draft.save()
+
+            let root = OpenClawConfigFile.loadDict()
+            #expect(GatewayRemoteConfig.resolveTransport(root: root) == .direct)
+            #expect(GatewayRemoteConfig.resolveUrlString(root: root) == "wss://new.example.test:443")
+            #expect(GatewayRemoteConfig.resolveTokenString(root: root) == "new-test-token")
         }
     }
 

@@ -503,7 +503,10 @@ struct AppStateRemoteConfigTests {
         }
     }
 
-    @Test(arguments: ["cancel", "selection", "file", "unrelated-file"])
+    @Test(arguments: [
+        "cancel", "selection", "file", "unrelated-file",
+        "observed-file", "observed-unrelated-file", "observed-file-round-trip",
+    ])
     func `profile promotion follows current primary authority`(interruption: String) async throws {
         let configPath = TestIsolation.tempConfigPath()
         defer { try? FileManager.default.removeItem(atPath: configPath) }
@@ -513,6 +516,7 @@ struct AppStateRemoteConfigTests {
                     "transport": "direct", "url": "wss://previous.example:443", "token": "previous-token",
                 ]],
             ]))
+            let original = OpenClawConfigFile.loadDict()
             let state = AppState(preview: true)
             state._testEnableGatewayConfigSync()
             let gate = GatewayConfigReadGate()
@@ -539,28 +543,39 @@ struct AppStateRemoteConfigTests {
                 }
             } else {
                 var root = OpenClawConfigFile.loadDict()
-                if interruption == "file" {
+                if interruption == "file" || interruption == "observed-file" ||
+                    interruption == "observed-file-round-trip"
+                {
                     root["gateway"] = ["mode": "remote", "remote": [
                         "transport": "direct", "url": "wss://newer.example:443", "token": "newer-token",
                     ]]
                 }
                 root["agents"] = ["defaults": ["workspace": "/example/updated-workspace"]]
                 #expect(OpenClawConfigFile.saveDict(root))
+                if interruption.hasPrefix("observed-") {
+                    state._testApplyConfigOverrides(root)
+                }
+                if interruption == "observed-file-round-trip" {
+                    root["gateway"] = original["gateway"]
+                    #expect(OpenClawConfigFile.saveDict(root))
+                    state._testApplyConfigOverrides(root)
+                }
             }
             await gate.release()
 
-            if interruption == "unrelated-file" {
+            let canPromote = interruption == "unrelated-file" || interruption == "observed-unrelated-file"
+            if canPromote {
                 try await promotion.value
             } else {
                 await #expect(throws: Error.self) { try await promotion.value }
             }
 
             let root = OpenClawConfigFile.loadDict()
-            let expectedHost = interruption == "cancel" ? "previous" :
-                interruption == "unrelated-file" ? "delayed" : "newer"
+            let expectedHost = interruption == "cancel" || interruption == "observed-file-round-trip" ? "previous" :
+                canPromote ? "delayed" : "newer"
             #expect(GatewayRemoteConfig.resolveUrlString(root: root) == "wss://\(expectedHost).example:443")
             #expect(GatewayRemoteConfig.resolveTokenString(root: root) == "\(expectedHost)-token")
-            if interruption == "file" || interruption == "unrelated-file" {
+            if interruption != "cancel", interruption != "selection" {
                 #expect((root["agents"] as? [String: [String: String]])?["defaults"]?["workspace"] ==
                     "/example/updated-workspace")
             }
