@@ -11,7 +11,10 @@ import {
   readMcpOAuthStatusesInDatabase,
 } from "../agents/mcp-oauth-store.kernel.js";
 import {
+  loadSubagentMaintenanceRunsInDatabase,
+  loadSubagentRegistryFromSqlite,
   loadSubagentRunsByRunIdsFromSqlite,
+  loadSubagentRunsForSessionsInDatabase,
   loadSubagentRunsForChildSessionFromSqlite,
   loadSubagentRunsForSessionFromSqlite,
   loadSubagentSessionListRunsFromSqlite,
@@ -19,10 +22,15 @@ import {
 import { readWorkspaceStateSnapshotForDirectoryInDatabase } from "../agents/workspace-state-store.kernel.js";
 import { isChannelIngressReadCommand } from "../channels/message/ingress-queue-read-contract.js";
 import { readChannelIngressInDatabase } from "../channels/message/ingress-queue-read.worker.js";
+import { readCronScratchSnapshotInDatabase } from "../cron/scratch-read.kernel.js";
 import { readCronJobNamesInDatabase } from "../cron/store/job-name.js";
 import { resolveCronJobsStorePath } from "../cron/store/paths.js";
 import { readActiveCronRunReceiptOwnersInDatabase } from "../cron/store/run-receipt-read.js";
 import { observeCronRunRecoveryInDatabase } from "../cron/store/run-recovery.read.js";
+import {
+  readSharedGitHubPublicationRequestInDatabase,
+  readSharedRepositoryGitHubPublicationInDatabase,
+} from "../gateway/github-publication-shared-read.kernel.js";
 import {
   readGitHubPublicationRequest,
   readKnownGitHubPublicationPullRequestUrlsInDatabase,
@@ -39,12 +47,16 @@ import {
   readWorkerSessionPlacementProjectionInDatabase,
 } from "../gateway/worker-environments/placement-read-projection.js";
 import { readWorkerPlacementChangeSnapshotInDatabase } from "../gateway/worker-environments/placement-row-codec.js";
+import { readWorkspaceJournalInDatabase } from "../gateway/worker-environments/placement-workspace-journal.js";
+import { isWorkspaceJournalReadCommand } from "../gateway/worker-environments/placement-workspace-journal.worker-contract.js";
 import {
   readWorkerEnvironmentFacts,
   readWorkerEnvironmentPrunePage,
 } from "../gateway/worker-environments/store-row-codec.js";
+import { getSqliteRuntimeCapabilities } from "../infra/bun-sqlite-library.js";
 import { executeDevicePairingRead } from "../infra/device-pairing-read.kernel.js";
 import { readExecApprovalsConfigRow } from "../infra/exec-approvals-sqlite.js";
+import { bunSqliteNativeCleanupPending } from "../infra/node-sqlite.js";
 import { inspectCurrentConversationBindingRecordInDatabase } from "../infra/outbound/current-conversation-bindings.kernel.js";
 import { readOutboundDeliveriesInDatabase } from "../infra/outbound/delivery-queue-storage.kernel.js";
 import { getAdmittedSqliteSchemaFacts } from "../infra/sqlite-schema-facts.js";
@@ -99,7 +111,7 @@ import type {
 } from "./openclaw-state-read.types.js";
 import { isReadRequest } from "./openclaw-state-read.validation.js";
 import { encodeOpenClawStateWorkerError } from "./openclaw-state-worker-error.js";
-import { findSessionRepositoryWorkspaceInDatabase } from "./session-repository-workspaces.js";
+import { findSessionRepositoryWorkspaceInDatabase } from "./session-repository-workspaces.kernel.js";
 import {
   listUserChannelIdentitiesInDatabase,
   resolveUserChannelIdentityInDatabase,
@@ -239,6 +251,34 @@ serveOwnedWorkerTasks(
               return readChannelIngressInDatabase(db, command);
             }
             if (command.type === "subagents.runs") {
+              if (command.scope.kind === "all") {
+                return { type: command.type, runs: loadSubagentRegistryFromSqlite({ db }) };
+              }
+              if (command.scope.kind === "maintenance") {
+                const maintenance = loadSubagentMaintenanceRunsInDatabase({ db });
+                return {
+                  type: command.type,
+                  projection: "maintenance",
+                  runs: maintenance.runs,
+                  maintenanceDigest: maintenance.digest,
+                };
+              }
+              if (command.scope.kind === "descendants") {
+                const descendants = loadSubagentRunsForSessionsInDatabase(
+                  { db },
+                  command.scope.sessionKeys,
+                  command.scope.liveTopology,
+                );
+                return {
+                  type: command.type,
+                  runs: descendants.runs,
+                  descendantBasis: {
+                    digest: descendants.digest,
+                    sessionKeys: descendants.sessionKeys,
+                    runIds: descendants.runIds,
+                  },
+                };
+              }
               const rows =
                 command.scope.kind === "session"
                   ? loadSubagentRunsForSessionFromSqlite(command.scope.sessionKey, { db })
@@ -300,6 +340,12 @@ serveOwnedWorkerTasks(
               return {
                 type: command.type,
                 observation: observeCronRunRecoveryInDatabase(db, command),
+              };
+            }
+            if (command.type === "cron.scratch") {
+              return {
+                type: command.type,
+                snapshot: readCronScratchSnapshotInDatabase(db, command),
               };
             }
             if (command.type === "cron.jobNames") {
@@ -479,6 +525,16 @@ serveOwnedWorkerTasks(
                 lifecycle: readGitHubPublicationSessionLifecycle(command, db),
               };
             }
+            if (command.type === "githubPublication.sharedObservation") {
+              const { kind, session, selector, entry } = command.input;
+              return {
+                type: command.type,
+                row:
+                  kind === "repository"
+                    ? readSharedRepositoryGitHubPublicationInDatabase(db, session, selector, entry)
+                    : readSharedGitHubPublicationRequestInDatabase(db, session, selector, entry),
+              };
+            }
             if (command.type === "githubPublication.request") {
               return {
                 type: command.type,
@@ -583,6 +639,9 @@ serveOwnedWorkerTasks(
                 placements: readWorkerPlacementChangeSnapshotInDatabase(db, command.profileIds),
               };
             }
+            if (isWorkspaceJournalReadCommand(command)) {
+              return readWorkspaceJournalInDatabase(db, command);
+            }
             if (command.type === "workers.placementRecoveryCandidates") {
               return {
                 type: command.type,
@@ -607,6 +666,12 @@ serveOwnedWorkerTasks(
         );
         return { ok: true, sourceAdmitted: true, ...result };
       });
+      if (
+        !getSqliteRuntimeCapabilities().explicitSqliteCloseReleasesNativeResources &&
+        bunSqliteNativeCleanupPending
+      ) {
+        nativeCleanupFailure ??= { error: undefined };
+      }
       return nativeCleanupFailure ? { ...reply, nativeCleanupFailure } : reply;
     } catch (value) {
       const error = toStringifiedError(value);

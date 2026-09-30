@@ -12,11 +12,7 @@ import {
   resolveSubscriptionAuthModeForProfiles,
 } from "../../auth-profiles.js";
 import { OAuthRefreshFailureError } from "../../auth-profiles/oauth-refresh-failure.js";
-import {
-  classifyFailoverReason,
-  isFailoverErrorMessage,
-  type FailoverReason,
-} from "../../embedded-agent-helpers.js";
+import { classifyFailoverReason, type FailoverReason } from "../../embedded-agent-helpers.js";
 import { FailoverError, resolveFailoverStatus } from "../../failover-error.js";
 import { shouldUseTransientCooldownProbeSlot } from "../../failover-policy.js";
 import { getFailoverErrorCode } from "../../failover/error.js";
@@ -152,19 +148,6 @@ export function createEmbeddedRunAuthController(params: {
   // later profile cannot inherit an earlier profile's endpoint or headers.
   const baseRuntimeModel = state.models.runtime;
   const baseEffectiveModel = state.models.effective;
-
-  const commitPreparedModel = (
-    preparedModel:
-      | Awaited<ReturnType<NonNullable<typeof params.prepareModelForAuthProfile>>>
-      | undefined,
-  ) => {
-    preparedModel?.commit();
-    if (preparedModel?.authRequirement) {
-      return;
-    }
-    state.models.runtime = baseRuntimeModel;
-    state.models.effective = baseEffectiveModel;
-  };
 
   const applyPreparedRuntimeRequestOverrides = (paramsForApply: {
     runtimeModel: Model;
@@ -536,7 +519,11 @@ export function createEmbeddedRunAuthController(params: {
       const runtimeModel = preparedModel?.runtimeModel ?? state.models.runtime;
       throw new MissingProviderAuthError(runtimeModel.provider, apiKeyInfo);
     }
-    commitPreparedModel(preparedModel);
+    preparedModel?.commit();
+    if (!preparedModel?.authRequirement) {
+      state.models.runtime = baseRuntimeModel;
+      state.models.effective = baseEffectiveModel;
+    }
     const runtimeModel = state.models.runtime;
     // AWS's default credential chain has no explicit key. The sentinel admits
     // runtime auth preparation or, without a plugin token, SDK request signing.
@@ -665,9 +652,6 @@ export function createEmbeddedRunAuthController(params: {
     retried: boolean,
   ): Promise<boolean> => {
     if (!state.runtimeAuthState || retried) {
-      return false;
-    }
-    if (!isFailoverErrorMessage(errorText, { provider: params.provider })) {
       return false;
     }
     if (classifyFailoverReason(errorText, { provider: params.provider }) !== "auth") {
