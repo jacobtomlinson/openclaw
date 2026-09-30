@@ -1,5 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
-import { getAiTransportHost } from "../host.js";
+import { describe, expect, it } from "vitest";
 import { FAILED_ASSISTANT_REPLAY_TEXT } from "../replay-turn-classification.js";
 import type { Model } from "../types.js";
 import { createZeroUsage } from "../usage.test-support.js";
@@ -282,7 +281,7 @@ describe("openai completions params", () => {
     },
   );
 
-  it("preserves non-reasoning short budgets and the exhausted-budget fallback", () => {
+  it("rejects a non-reasoning proxy request when the input leaves no useful output budget", () => {
     const model = makeCompletionsModel({
       baseUrl: "http://localhost:8000/v1",
       reasoning: false,
@@ -290,47 +289,19 @@ describe("openai completions params", () => {
       maxTokens: 1000,
     });
     const context = emptyContext("x".repeat(3200));
-    for (const [remaining, expected] of [
-      [-1, 1],
-      [0, 1],
-      [1, 1],
-      [15, 15],
-    ] as const) {
-      expect(
+    for (const remaining of [-1, 0, 1, 15]) {
+      expect(() =>
         buildOpenAICompletionsParams(
           { ...model, contextTokens: 1001 + remaining },
           context,
           undefined,
-        ).max_completion_tokens,
-      ).toBe(expected);
+        ),
+      ).toThrowError(expect.objectContaining({ code: "context_length_exceeded" }));
     }
+    expect(() =>
+      buildOpenAICompletionsParams({ ...model, contextTokens: 1000 }, context, { maxTokens: 1 }),
+    ).toThrowError(expect.objectContaining({ code: "context_length_exceeded" }));
   });
-
-  it.each([false, true])(
-    "warns when a short non-thinking request proceeds (reasoning=%s)",
-    (reasoning) => {
-      const model = makeCompletionsModel({
-        baseUrl: "http://localhost:8000/v1",
-        reasoning,
-        contextWindow: 1000,
-        maxTokens: 1000,
-      });
-      const warning = vi.spyOn(getAiTransportHost(), "logWarn");
-      try {
-        const params = buildOpenAICompletionsParams(model, emptyContext("x".repeat(3200)), {
-          reasoning: "off",
-        });
-        expect(params.max_completion_tokens).toBe(1);
-        expect(warning).toHaveBeenCalledWith(
-          "openai-transport",
-          expect.stringContaining("insufficient_output_budget"),
-          undefined,
-        );
-      } finally {
-        warning.mockRestore();
-      }
-    },
-  );
 
   it("preserves useful clamping and intentionally short completions", () => {
     const model = makeCompletionsModel({

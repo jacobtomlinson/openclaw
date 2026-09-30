@@ -319,17 +319,11 @@ describe("openai completions params", () => {
 
     const nearCapModel = { ...baseModel, contextWindow: 1016 };
     const nearCapContext = { systemPrompt: "x".repeat(3200), messages: [], tools: [] };
-    expect(
-      buildOpenAICompletionsParams(nearCapModel, nearCapContext, { reasoning: "off" }),
-    ).toMatchObject({ enable_thinking: false, max_completion_tokens: 15 });
-    expect(() =>
-      buildOpenAICompletionsParams(nearCapModel, nearCapContext, { reasoning: "medium" }),
-    ).toThrowError(expect.objectContaining({ code: "context_length_exceeded" }));
-    expect(
-      buildOpenAICompletionsParams({ ...baseModel, contextWindow: 1000 }, nearCapContext, {
-        reasoning: "off",
-      }),
-    ).toMatchObject({ enable_thinking: false, max_completion_tokens: 1 });
+    for (const reasoning of ["off", "medium"] as const) {
+      expect(() =>
+        buildOpenAICompletionsParams(nearCapModel, nearCapContext, { reasoning }),
+      ).toThrowError(expect.objectContaining({ code: "context_length_exceeded" }));
+    }
   });
 
   it("maps qwen-chat-template thinking format to chat_template_kwargs", () => {
