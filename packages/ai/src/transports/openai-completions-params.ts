@@ -515,10 +515,7 @@ export function buildOpenAICompletionsRequest(
     ) {
       const estimatedInputTokens = estimateOpenAICompletionsInputTokens(params);
       const remainingBudget = effectiveContextTokens - estimatedInputTokens - 1;
-      if (
-        remainingBudget < 1 ||
-        (clampedMaxTokens > remainingBudget && remainingBudget < MIN_USEFUL_OUTPUT_TOKENS)
-      ) {
+      if (remainingBudget < 1) {
         throw Object.assign(
           new Error(
             `Context window exceeded: estimated input ${estimatedInputTokens} leaves only ` +
@@ -535,6 +532,22 @@ export function buildOpenAICompletionsRequest(
             `model=${model.id} requested=${effectiveMaxTokens} output=${clampedMaxTokens} ` +
             `effectiveContext=${effectiveContextTokens} estimatedInput=${estimatedInputTokens}`,
         );
+        if (remainingBudget < MIN_USEFUL_OUTPUT_TOKENS) {
+          if (model.reasoning && thinkingEnabled !== false) {
+            throw Object.assign(
+              new Error(
+                `Context window exceeded: estimated input ${estimatedInputTokens} leaves only ` +
+                  `${remainingBudget} output tokens within the ${effectiveContextTokens}-token context.`,
+              ),
+              { code: "context_length_exceeded" },
+            );
+          }
+          log.warn(
+            `[completions] insufficient_output_budget provider=${model.provider} api=${model.api} ` +
+              `model=${model.id} output=${clampedMaxTokens} ` +
+              `effectiveContext=${effectiveContextTokens} estimatedInput=${estimatedInputTokens}`,
+          );
+        }
       }
     }
     if (policy.mode === "direct" ? options?.maxTokens : clampedMaxTokens) {

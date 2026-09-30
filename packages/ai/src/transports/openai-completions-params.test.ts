@@ -281,7 +281,7 @@ describe("openai completions params", () => {
     },
   );
 
-  it("rejects a non-reasoning proxy request when the input leaves no useful output budget", () => {
+  it("rejects exhausted non-reasoning budgets while preserving short output budgets", () => {
     const model = makeCompletionsModel({
       baseUrl: "http://localhost:8000/v1",
       reasoning: false,
@@ -289,7 +289,7 @@ describe("openai completions params", () => {
       maxTokens: 1000,
     });
     const context = emptyContext("x".repeat(3200));
-    for (const remaining of [-1, 0, 1, 15]) {
+    for (const remaining of [-1, 0]) {
       expect(() =>
         buildOpenAICompletionsParams(
           { ...model, contextTokens: 1001 + remaining },
@@ -297,6 +297,15 @@ describe("openai completions params", () => {
           undefined,
         ),
       ).toThrowError(expect.objectContaining({ code: "context_length_exceeded" }));
+    }
+    for (const remaining of [1, 15]) {
+      expect(
+        buildOpenAICompletionsParams(
+          { ...model, contextTokens: 1001 + remaining },
+          context,
+          undefined,
+        ).max_completion_tokens,
+      ).toBe(remaining);
     }
     expect(() =>
       buildOpenAICompletionsParams({ ...model, contextTokens: 1000 }, context, { maxTokens: 1 }),
