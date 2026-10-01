@@ -18,6 +18,60 @@ describe("openai completions stream", () => {
     resetDiagnosticRunActivityForTest();
   });
 
+  it("sends an explicitly requested one-token completion despite an exhausted estimate", async () => {
+    let requestedMaxTokens: number | undefined;
+    const server = createServer((req, res) => {
+      let body = "";
+      req.setEncoding("utf8");
+      req.on("data", (chunk: string) => {
+        body += chunk;
+      });
+      req.on("end", () => {
+        const payload = JSON.parse(body) as { max_completion_tokens?: number };
+        requestedMaxTokens = payload.max_completion_tokens;
+        res.writeHead(200, { "content-type": "text/event-stream; charset=utf-8" });
+        for (const chunk of [
+          makeCompletionsChunk({ role: "assistant", content: "A" }),
+          makeCompletionsChunk({}, "stop"),
+        ]) {
+          res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+        }
+        res.end("data: [DONE]\n\n");
+      });
+    });
+
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("Missing loopback server address");
+      }
+      const model = makeCompletionsModel({
+        provider: "compatible-proxy",
+        baseUrl: `http://127.0.0.1:${address.port}/v1`,
+        reasoning: false,
+        contextWindow: 1000,
+        maxTokens: 1000,
+      });
+      const stream = await createOpenAICompletionsTransportStreamFn()(
+        model,
+        { systemPrompt: "x".repeat(3200), messages: [], tools: [] },
+        { apiKey: "synthetic-test-key", maxTokens: 1 },
+      );
+      const result = await stream.result();
+
+      expect(requestedMaxTokens).toBe(1);
+      expect(result.stopReason).toBe("stop");
+      expect(result.content).toEqual([expect.objectContaining({ text: "A" })]);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
   describe.each([
     { name: "direct", createStream: streamOpenAICompletions },
     { name: "managed", createStream: createOpenAICompletionsTransportStreamFn() },
