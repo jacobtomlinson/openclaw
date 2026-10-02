@@ -158,6 +158,15 @@ describe("OpenAI completions output budgets", () => {
         }).max_completion_tokens,
       ).toBe(1);
     }
+    for (const key of ["maxTokens", "max_completion_tokens", "max_tokens"]) {
+      expect(
+        buildOpenAICompletionsParams(
+          { ...proxy, contextTokens: 1000, params: { [key]: 1 } },
+          context,
+          undefined,
+        ).max_completion_tokens,
+      ).toBe(1);
+    }
     expect(() =>
       buildOpenAICompletionsParams({ ...proxy, contextTokens: 1000 }, context, { maxTokens: 16 }),
     ).toThrowError(expect.objectContaining({ code: "context_length_exceeded" }));

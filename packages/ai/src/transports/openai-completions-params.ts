@@ -80,17 +80,17 @@ function isKnownOpenAICompletionsEndpoint(model: Pick<Model, "baseUrl">): boolea
 function resolveOpenAICompletionsMaxTokens(
   model: OpenAIModeModel,
   options: OpenAICompletionsOptions | undefined,
-): { maxTokens: number | undefined; clampToModelMaxTokens: boolean } {
+): { maxTokens: number | undefined; clampToModelMaxTokens: boolean; explicit: boolean } {
   if (options?.maxTokens) {
-    return { maxTokens: options.maxTokens, clampToModelMaxTokens: true };
+    return { maxTokens: options.maxTokens, clampToModelMaxTokens: true, explicit: true };
   }
   const paramsMaxTokens = resolveMaxTokensParam(
     (model as { params?: Record<string, unknown> }).params,
   );
   if (paramsMaxTokens) {
-    return { maxTokens: paramsMaxTokens, clampToModelMaxTokens: false };
+    return { maxTokens: paramsMaxTokens, clampToModelMaxTokens: false, explicit: true };
   }
-  return { maxTokens: model.maxTokens, clampToModelMaxTokens: false };
+  return { maxTokens: model.maxTokens, clampToModelMaxTokens: false, explicit: false };
 }
 
 function resolveOpenAICompletionsModelMaxTokens(model: OpenAIModeModel): number | undefined {
@@ -486,7 +486,11 @@ export function buildOpenAICompletionsRequest(
   {
     const maxTokenBudget =
       policy.mode === "direct"
-        ? { maxTokens: options?.maxTokens, clampToModelMaxTokens: true }
+        ? {
+            maxTokens: options?.maxTokens,
+            clampToModelMaxTokens: true,
+            explicit: Boolean(options?.maxTokens),
+          }
         : resolveOpenAICompletionsMaxTokens(model, options);
     const effectiveMaxTokens = maxTokenBudget.maxTokens;
     const effectiveContextTokens = resolveOpenAICompletionsEffectiveContextTokens(model);
@@ -516,9 +520,10 @@ export function buildOpenAICompletionsRequest(
       const estimatedInputTokens = estimateOpenAICompletionsInputTokens(params);
       const remainingBudget = effectiveContextTokens - estimatedInputTokens - 1;
       const explicitShortCompletion =
-        options?.maxTokens !== undefined &&
-        options.maxTokens > 0 &&
-        options.maxTokens < MIN_USEFUL_OUTPUT_TOKENS;
+        maxTokenBudget.explicit &&
+        effectiveMaxTokens !== undefined &&
+        effectiveMaxTokens > 0 &&
+        effectiveMaxTokens < MIN_USEFUL_OUTPUT_TOKENS;
       if (remainingBudget < 1 && !explicitShortCompletion) {
         throw Object.assign(
           new Error(

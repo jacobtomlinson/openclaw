@@ -18,8 +18,8 @@ describe("openai completions stream", () => {
     resetDiagnosticRunActivityForTest();
   });
 
-  it("sends an explicitly requested one-token completion despite an exhausted estimate", async () => {
-    let requestedMaxTokens: number | undefined;
+  it("preserves short caps from requests and model params despite an exhausted estimate", async () => {
+    const requestedMaxTokens: number[] = [];
     const server = createServer((req, res) => {
       let body = "";
       req.setEncoding("utf8");
@@ -28,7 +28,7 @@ describe("openai completions stream", () => {
       });
       req.on("end", () => {
         const payload = JSON.parse(body) as { max_completion_tokens?: number };
-        requestedMaxTokens = payload.max_completion_tokens;
+        requestedMaxTokens.push(payload.max_completion_tokens ?? -1);
         res.writeHead(200, { "content-type": "text/event-stream; charset=utf-8" });
         for (const chunk of [
           makeCompletionsChunk({ role: "assistant", content: "A" }),
@@ -55,16 +55,33 @@ describe("openai completions stream", () => {
         contextWindow: 1000,
         maxTokens: 1000,
       });
-      const stream = await createOpenAICompletionsTransportStreamFn()(
-        model,
-        { systemPrompt: "x".repeat(3200), messages: [], tools: [] },
-        { apiKey: "synthetic-test-key", maxTokens: 1 },
-      );
-      const result = await stream.result();
+      const context = { systemPrompt: "x".repeat(3200), messages: [], tools: [] };
+      const createStream = createOpenAICompletionsTransportStreamFn();
+      const automaticStream = await createStream(model, context, {
+        apiKey: "synthetic-test-key",
+      });
+      const automaticResult = await automaticStream.result();
+      expect(automaticResult.stopReason).toBe("error");
+      expect(automaticResult.errorMessage).toContain("Context window exceeded");
+      expect(requestedMaxTokens).toEqual([]);
 
-      expect(requestedMaxTokens).toBe(1);
-      expect(result.stopReason).toBe("stop");
-      expect(result.content).toEqual([expect.objectContaining({ text: "A" })]);
+      const runtimeStream = await createStream(model, context, {
+        apiKey: "synthetic-test-key",
+        maxTokens: 1,
+      });
+      const runtimeResult = await runtimeStream.result();
+      const configuredStream = await createStream(
+        { ...model, params: { max_completion_tokens: 1 } },
+        context,
+        { apiKey: "synthetic-test-key" },
+      );
+      const configuredResult = await configuredStream.result();
+
+      expect(requestedMaxTokens).toEqual([1, 1]);
+      for (const result of [runtimeResult, configuredResult]) {
+        expect(result.stopReason).toBe("stop");
+        expect(result.content).toEqual([expect.objectContaining({ text: "A" })]);
+      }
     } finally {
       await new Promise<void>((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));
