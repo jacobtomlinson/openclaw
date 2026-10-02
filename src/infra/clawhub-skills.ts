@@ -366,7 +366,14 @@ export async function fetchClawHubSkillCatalog(
           if (!isRecord(detail) || !isRecord(detail.package)) {
             throw new Error("Malformed ClawHub skill listing: expected a package object.");
           }
-          item.official = readClawHubBooleanField(detail.package, "isOfficial", "skill listing");
+          // This route resolves packages before skills, even with family=skill.
+          const listing = detail.package;
+          item.official =
+            listing.family === "skill" &&
+            listing.name === item.slug &&
+            listing.ownerHandle === item.ownerHandle
+              ? readClawHubBooleanField(listing, "isOfficial", "skill listing")
+              : undefined;
         }),
       );
     }

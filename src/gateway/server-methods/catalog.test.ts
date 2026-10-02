@@ -255,7 +255,14 @@ describe("registered Gateway catalog discovery", () => {
       vi.fn(async (input) => {
         const url = new URL(String(input));
         if (url.pathname.startsWith("/api/v1/packages/")) {
-          return Response.json({ package: { isOfficial: false } });
+          return Response.json({
+            package: {
+              family: "skill",
+              name: "same-slug",
+              ownerHandle: "alice",
+              isOfficial: false,
+            },
+          });
         }
         return Response.json({
           items: [

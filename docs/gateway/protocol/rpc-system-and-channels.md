@@ -191,7 +191,9 @@ contracts. These project the native skill catalog and expose the listing's
 search and trending can combine publisher and listing official status; the new
 catalog does not use publisher official status as a substitute. Native trending
 entries therefore read their listing flag from package metadata in bounded
-batches. Missing flags never qualify; featured status, verification tiers,
+batches. The package-detail route can resolve a same-named package first; its
+metadata qualifies only when family, slug, and publisher match the exact skill.
+Mismatched metadata leaves official status unknown. Missing flags never qualify; featured status, verification tiers,
 publisher handles, and bundled provenance cannot qualify a listing either.
 
 The package skill catalog currently covers native ClawHub skills. External

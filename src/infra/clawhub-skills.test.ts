@@ -364,6 +364,45 @@ describe("clawhub skills", () => {
     ).rejects.toThrow("Malformed ClawHub skill listing");
   });
 
+  it.each([
+    { family: "code-plugin" },
+    { name: "another-skill" },
+    { ownerHandle: "bob" },
+    { ownerHandle: null },
+  ])("does not borrow official status from mismatched trending metadata: %j", async (mismatch) => {
+    const result = await fetchClawHubSkillCatalog({
+      feed: "trending",
+      fetchImpl: async (input) => {
+        const url = new URL(input instanceof Request ? input.url : String(input));
+        if (url.pathname === "/api/v1/packages/weather") {
+          return Response.json({
+            package: {
+              family: "skill",
+              name: "weather",
+              ownerHandle: "alice",
+              isOfficial: true,
+              ...mismatch,
+            },
+          });
+        }
+        return Response.json({
+          items: [
+            {
+              slug: "weather",
+              displayName: "Weather",
+              source: "clawhub",
+              official: true,
+              publisher: { handle: "alice", official: true },
+              install: { kind: "clawhub", reference: "alice/weather" },
+              metrics: { updatedAt: 123 },
+            },
+          ],
+        });
+      },
+    });
+    expect(result.items).toMatchObject([{ installRef: "@alice/weather", official: undefined }]);
+  });
+
   it("rejects malformed catalog envelopes and unsupported search pagination", async () => {
     for (const response of [{}, { items: null }, { items: [null] }, { items: [], nextCursor: 1 }]) {
       await expect(
