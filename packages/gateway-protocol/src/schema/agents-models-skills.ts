@@ -11,6 +11,9 @@ import { NonEmptyString, Sha256String } from "./primitives.js";
 import { GitHubSetupHandleSchema } from "./secrets.js";
 import { SessionPermissionModeSchema } from "./sessions-row.js";
 
+export { SkillsSearchParamsSchema, SkillsSearchResultSchema } from "./skills-search.js";
+export type { SkillsSearchParams, SkillsSearchResult } from "./skills-search.js";
+
 export {
   ModelChoiceSchema,
   ModelRuntimeChoiceSchema,
@@ -300,9 +303,6 @@ export const SkillsUploadCommitParamsSchema = closedObject({
 const CLAWHUB_SKILL_REF_DESCRIPTION =
   "ClawHub skill reference: `@owner/slug`, `skills-sh:owner/repo/slug`, or a bare `slug` when no publisher is known.";
 
-/** Wire copy of the core trust state; this package intentionally depends on typebox only. */
-const CLAWHUB_SKILLS_SH_TRUST_STATE_VALUE = "not-scanned-by-clawhub";
-
 /** Installs a skill from legacy install id, ClawHub, or uploaded archive. */
 export const SkillsInstallParamsSchema = Type.Union([
   closedObject({
@@ -353,46 +353,6 @@ export const SkillsUpdateParamsSchema = Type.Union([
     force: Type.Optional(Type.Boolean()),
   }),
 ]);
-
-/** Searches the skill registry. */
-export const SkillsSearchParamsSchema = closedObject({
-  query: Type.Optional(NonEmptyString),
-  limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
-});
-
-/** Ranked skill registry search results. */
-export const SkillsSearchResultSchema = closedObject({
-  results: Type.Array(
-    closedObject({
-      score: Type.Number(),
-      slug: NonEmptyString,
-      registry: NonEmptyString,
-      ownerHandle: Type.Optional(Type.Union([NonEmptyString, Type.Null()])),
-      installRef: Type.String({
-        minLength: 1,
-        description:
-          "Source-qualified reference for this result. Send it as `slug` to skills.install; several publishers can share one slug.",
-      }),
-      installOnly: Type.Optional(
-        Type.Literal(true, {
-          description:
-            "Present when ClawHub serves this result install-only: offer install directly with `installRef`, because skills.detail cannot answer for it. Absence means the ordinary review-then-install flow, so results from servers that predate this field keep their existing behavior.",
-        }),
-      ),
-      trustState: Type.Optional(
-        Type.Literal(CLAWHUB_SKILLS_SH_TRUST_STATE_VALUE, {
-          description:
-            "Present when ClawHub resolves this result from a source it has not scanned.",
-        }),
-      ),
-      displayName: NonEmptyString,
-      summary: Type.Optional(Type.String()),
-      icon: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-      version: Type.Optional(NonEmptyString),
-      updatedAt: Type.Optional(Type.Integer()),
-    }),
-  ),
-});
 
 /** Reads registry detail for one skill. */
 export const SkillsDetailParamsSchema = closedObject({
@@ -1164,8 +1124,6 @@ export type ToolsInvokeParams = Static<typeof ToolsInvokeParamsSchema>;
 export type ToolsInvokeResult = Static<typeof ToolsInvokeResultSchema>;
 export type SkillsBinsParams = Static<typeof SkillsBinsParamsSchema>;
 export type SkillsBinsResult = Static<typeof SkillsBinsResultSchema>;
-export type SkillsSearchParams = Static<typeof SkillsSearchParamsSchema>;
-export type SkillsSearchResult = Static<typeof SkillsSearchResultSchema>;
 export type SkillsDetailParams = Static<typeof SkillsDetailParamsSchema>;
 export type SkillsDetailResult = Static<typeof SkillsDetailResultSchema>;
 export type SkillsProposalsListParams = Static<typeof SkillsProposalsListParamsSchema>;
