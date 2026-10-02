@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import { AgentSelectionRequiredError } from "../agents/agent-scope-config.js";
 import { ConfigReadOnlyError, NixModeConfigMutationError } from "../config/config-write-guard.js";
+import { createInvalidConfigError } from "../config/io.invalid-config.js";
 import {
   GatewayCredentialsRequiredError,
   GatewayExplicitAuthRequiredError,
@@ -184,6 +185,27 @@ describe("formatCliJsonFailure", () => {
 });
 
 describe("formatCliFailureLines", () => {
+  it.each([false, true])(
+    "preserves manual config repair without repeating an emitted diagnostic (%s)",
+    (diagnosticEmitted) => {
+      const error = createInvalidConfigError(
+        "/tmp/openclaw.json",
+        "Restore the original config from backup.",
+        { recovery: "manual" },
+      );
+      error.diagnosticEmitted = diagnosticEmitted;
+      const lines = formatCliFailureLines({ title: "Command failed", error, env: {} });
+      expect(lines).toEqual(
+        diagnosticEmitted
+          ? []
+          : ["Invalid config at /tmp/openclaw.json:", "Restore the original config from backup."],
+      );
+      expect(formatCliJsonFailure(error, { env: {} }).error.message).toBe(
+        "Invalid config at /tmp/openclaw.json:\nRestore the original config from backup.",
+      );
+    },
+  );
+
   it("emits expected guidance only when not already written even with debug output", () => {
     const env = { OPENCLAW_DEBUG: "1" };
     const pending = new ExpectedCliError({

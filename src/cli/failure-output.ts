@@ -1,4 +1,5 @@
 // Shared root CLI failure formatting with debug stack gating and recovery hints.
+import { isInvalidConfigError } from "../config/io.invalid-config.js";
 import { isGatewayTransportError } from "../gateway/transport-error.js";
 import { isTruthyEnvValue } from "../infra/env.js";
 import { collectNestedErrorCandidates } from "../infra/error-graph-internal.js";
@@ -104,7 +105,8 @@ export function isExpectedCliError(error: unknown): error is Error {
   return (
     error instanceof ExpectedCliError ||
     isGatewayCredentialsCliError(error) ||
-    (error instanceof Error && EXPECTED_CLI_ERROR_NAMES.has(error.name)) ||
+    (error instanceof Error &&
+      (EXPECTED_CLI_ERROR_NAMES.has(error.name) || isInvalidConfigError(error))) ||
     isGatewayTransportError(error)
   );
 }
@@ -120,7 +122,7 @@ function resolveExpectedCliOutput(error: Error) {
     ? error
     : {
         humanOutput: error.message,
-        humanOutputWritten: false,
+        humanOutputWritten: isInvalidConfigError(error) && error.diagnosticEmitted === true,
         machineOutput: error.message,
       };
 }
