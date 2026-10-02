@@ -224,7 +224,7 @@ describe("plugin lifecycle protocol validators", () => {
     expect(validatePluginsInspectParams({ pluginId: "workboard", unexpected: true })).toBe(false);
   });
 
-  it("requires inspection review tokens and complete declared contract surfaces", () => {
+  it("validates optional inspection review tokens and complete declared contract surfaces", () => {
     const result = {
       ok: true,
       plugin: { id: "workboard", name: "Workboard", installed: true, enabled: false },
@@ -271,7 +271,13 @@ describe("plugin lifecycle protocol validators", () => {
       }),
     ).toBe(false);
     const { reviewToken: _reviewToken, ...withoutReviewToken } = result;
-    expect(Value.Check(PluginsInspectResultSchema, withoutReviewToken)).toBe(false);
+    expect(
+      Value.Check(PluginsInspectResultSchema, {
+        ...withoutReviewToken,
+        plugin: { ...result.plugin, installed: false },
+        declaredSurfaceStatus: "partial",
+      }),
+    ).toBe(true);
     const { contracts: _contracts, ...withoutContracts } = result.declared;
     expect(Value.Check(PluginsInspectResultSchema, { ...result, declared: withoutContracts })).toBe(
       false,
