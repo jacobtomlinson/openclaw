@@ -65,7 +65,7 @@ incognito owner during its separate migration.
 ### Retained helper contracts
 
 The question-reaction helpers in `openclaw/plugin-sdk/question-gateway-runtime`
-are deprecated and retained solely for existing third-party plugins. Bundled
+remain available for existing third-party plugins without a contract change. Bundled
 channels no longer use question reactions. New integrations should declare
 native question input through
 [`agentPrompt.questionInputMode`](/plugins/sdk-channel-plugins#what-your-plugin-owns)

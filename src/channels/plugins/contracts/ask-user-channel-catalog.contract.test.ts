@@ -1,16 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { discordPlugin } from "../extensions/discord/channel-plugin-api.js";
-import { imessagePlugin } from "../extensions/imessage/channel-plugin-api.js";
-import { mattermostPlugin } from "../extensions/mattermost/channel-plugin-api.js";
-import { signalPlugin } from "../extensions/signal/channel-plugin-api.js";
-import { slackPlugin } from "../extensions/slack/channel-plugin-api.js";
-import { telegramPlugin } from "../extensions/telegram/channel-plugin-api.js";
-import { whatsappPlugin } from "../extensions/whatsapp/channel-plugin-api.js";
-import { createOpenClawCodingToolsInternalAsync } from "../src/agents/agent-tools.js";
-import { clearRuntimeConfigSnapshot, setRuntimeConfigSnapshot } from "../src/config/io.js";
-import type { OpenClawConfig } from "../src/config/types.openclaw.js";
-import { resetPluginRuntimeStateForTest, setActivePluginRegistry } from "../src/plugins/runtime.js";
-import { createTestRegistry } from "../src/test-utils/channel-plugins.js";
+import { discordPlugin } from "../../../../extensions/discord/channel-plugin-api.js";
+import { imessagePlugin } from "../../../../extensions/imessage/channel-plugin-api.js";
+import { mattermostPlugin } from "../../../../extensions/mattermost/channel-plugin-api.js";
+import { signalPlugin } from "../../../../extensions/signal/channel-plugin-api.js";
+import { slackPlugin } from "../../../../extensions/slack/channel-plugin-api.js";
+import { telegramPlugin } from "../../../../extensions/telegram/channel-plugin-api.js";
+import { whatsappPlugin } from "../../../../extensions/whatsapp/channel-plugin-api.js";
+import { createOpenClawCodingToolsInternalAsync } from "../../../agents/agent-tools.js";
+import { clearRuntimeConfigSnapshot, setRuntimeConfigSnapshot } from "../../../config/io.js";
+import type { OpenClawConfig } from "../../../config/types.openclaw.js";
+import {
+  resetPluginRuntimeStateForTest,
+  setActivePluginRegistry,
+} from "../../../plugins/runtime.js";
+import { createTestRegistry } from "../../../test-utils/channel-plugins.js";
 
 const config: OpenClawConfig = {
   agents: { entries: { main: {} } },

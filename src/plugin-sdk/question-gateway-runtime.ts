@@ -14,10 +14,7 @@ import {
 
 const DEFAULT_QUESTION_REACTION_TARGET_TTL_MS = 24 * 60 * 60 * 1_000;
 
-/**
- * Creates one channel-owned target store for numbered ask_user reactions.
- * @deprecated Retained for third-party compatibility; declare native question input instead.
- */
+/** Creates one channel-owned target store for numbered ask_user reactions. */
 export function createQuestionReactionTargetStore<TIdentity, TMetadata = undefined>(params: {
   channel: string;
   channelDisplayName: string;
@@ -151,16 +148,11 @@ export function createQuestionReactionTargetStore<TIdentity, TMetadata = undefin
 
 export const questionGatewayRuntime = {
   resolveOption: resolveQuestionOverGateway,
-  /** @deprecated Retained for third-party question-reaction integrations. */
   reactionEmojis: QUESTION_REACTION_EMOJIS,
-  /** @deprecated Retained for third-party question-reaction integrations. */
   prepareReactionPayloadForDelivery: prepareQuestionReactionPayloadForDelivery,
   readAskUserQuestionId,
-  /** @deprecated Retained for third-party question-reaction integrations. */
   readReactionBinding: readQuestionReactionBinding,
-  /** @deprecated Retained for third-party question-reaction integrations. */
   resolveReactionIndex: resolveQuestionReactionIndex,
-  /** @deprecated Retained for third-party question-reaction integrations. */
   resolveReaction: resolveQuestionReactionOverGateway,
   registerChannelDelivery: registerQuestionChannelDelivery,
 };
