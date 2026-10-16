@@ -1,11 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { discordPlugin } from "../../../../extensions/discord/channel-plugin-api.js";
-import { imessagePlugin } from "../../../../extensions/imessage/channel-plugin-api.js";
-import { mattermostPlugin } from "../../../../extensions/mattermost/channel-plugin-api.js";
-import { signalPlugin } from "../../../../extensions/signal/channel-plugin-api.js";
-import { slackPlugin } from "../../../../extensions/slack/channel-plugin-api.js";
-import { telegramPlugin } from "../../../../extensions/telegram/channel-plugin-api.js";
-import { whatsappPlugin } from "../../../../extensions/whatsapp/channel-plugin-api.js";
 import { createOpenClawCodingToolsInternalAsync } from "../../../agents/agent-tools.js";
 import { clearRuntimeConfigSnapshot, setRuntimeConfigSnapshot } from "../../../config/io.js";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
@@ -14,6 +7,7 @@ import {
   setActivePluginRegistry,
 } from "../../../plugins/runtime.js";
 import { createTestRegistry } from "../../../test-utils/channel-plugins.js";
+import { getBundledChannelPluginAsync } from "./test-helpers/bundled-channel-plugin-loader.js";
 
 const config: OpenClawConfig = {
   agents: { entries: { main: {} } },
@@ -21,19 +15,21 @@ const config: OpenClawConfig = {
   tools: { allow: ["ask_user"] },
 };
 
-beforeEach(() => {
+beforeEach(async () => {
   setRuntimeConfigSnapshot(config);
   setActivePluginRegistry(
     createTestRegistry(
-      [
-        discordPlugin,
-        imessagePlugin,
-        mattermostPlugin,
-        signalPlugin,
-        slackPlugin,
-        telegramPlugin,
-        whatsappPlugin,
-      ].map((plugin) => ({ pluginId: plugin.id, plugin, source: "test" })),
+      await Promise.all(
+        ["discord", "imessage", "mattermost", "signal", "slack", "telegram", "whatsapp"].map(
+          async (pluginId) => {
+            const plugin = await getBundledChannelPluginAsync(pluginId);
+            if (!plugin) {
+              throw new Error(`Missing bundled channel plugin for ${pluginId}`);
+            }
+            return { pluginId, plugin, source: "test" };
+          },
+        ),
+      ),
     ),
   );
 });
