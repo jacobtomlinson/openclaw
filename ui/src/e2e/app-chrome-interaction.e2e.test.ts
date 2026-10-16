@@ -1,8 +1,8 @@
 // Control UI tests cover the canonical scrollbar profile and native-style text selection.
-import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import type { Locator, Page } from "playwright";
-import { expect, it } from "vitest";
+import { beforeEach, expect, it } from "vitest";
+import { createControlUiE2eArtifactDir } from "../test-helpers/control-ui-e2e-artifacts.ts";
 import {
   installMockGateway,
   waitForControlUiSettingsTakeover,
@@ -17,12 +17,12 @@ const suite = createControlUiE2eSuite({
 });
 
 const captureUiProofEnabled = process.env.OPENCLAW_CAPTURE_UI_PROOF === "1";
-const uiProofArtifactDir = path.join(
-  process.cwd(),
-  ".artifacts",
-  "control-ui-e2e",
-  "app-chrome-interaction",
-);
+let uiProofArtifactDir: string;
+beforeEach(() => {
+  if (captureUiProofEnabled) {
+    uiProofArtifactDir = createControlUiE2eArtifactDir("app-chrome-interaction");
+  }
+});
 
 async function dragAcross(page: Page, locator: Locator): Promise<string> {
   await locator.scrollIntoViewIfNeeded();
@@ -52,7 +52,6 @@ async function captureUiProof(page: Page, fileName: string) {
   if (!captureUiProofEnabled) {
     return;
   }
-  await mkdir(uiProofArtifactDir, { recursive: true });
   await page.screenshot({
     animations: "disabled",
     path: path.join(uiProofArtifactDir, fileName),
@@ -61,9 +60,6 @@ async function captureUiProof(page: Page, fileName: string) {
 
 suite.define(() => {
   it("keeps canonical scrollbars without horizontal model-picker overflow and preserves selection", async () => {
-    if (captureUiProofEnabled) {
-      await mkdir(uiProofArtifactDir, { recursive: true });
-    }
     await suite.withPage(
       {
         locale: "en-US",
@@ -74,11 +70,16 @@ suite.define(() => {
         viewport: { height: 900, width: 1440 },
       },
       async ({ page }) => {
-        await installMockGateway(page, {
+        const gateway = await installMockGateway(page, {
           historyMessages: [
             {
               role: "assistant",
-              content: [{ type: "text", text: "Selectable transcript content" }],
+              content: [
+                {
+                  type: "text",
+                  text: "Selectable transcript content\n\nRead [example.ts](/tmp/example.ts) for details.",
+                },
+              ],
             },
           ],
           models: [
@@ -135,6 +136,10 @@ suite.define(() => {
         });
         await page.keyboard.press("Escape");
         expect(await dragAcross(page, transcript)).toContain("Selectable transcript");
+        const fileLink = page.getByRole("button", { name: "example.ts", exact: true });
+        expect(await fileLink.evaluate((element) => getComputedStyle(element).userSelect)).toBe(
+          "text",
+        );
         const thread = page.locator(".chat-thread");
         expect(await readFocusOutline(thread)).toMatchObject({
           focusVisible: false,
@@ -193,7 +198,7 @@ suite.define(() => {
         });
         expect(settingsStyles).toEqual({
           contentScrollbar: "12px",
-          contentSelection: "none",
+          contentSelection: "auto",
           inputSelection: "text",
           sidebarScrollbar: "12px",
           sidebarSelection: "none",
@@ -201,6 +206,11 @@ suite.define(() => {
 
         await page.evaluate(() => globalThis.getSelection()?.removeAllRanges());
         expect(await dragAcross(page, settingsTitle)).toBe("");
+        const sectionTitle = page.locator(".settings-section__heading").first();
+        expect(await dragAcross(page, sectionTitle)).not.toBe("");
+        const toggleRow = page.locator(".settings-row--toggle").first();
+        await page.evaluate(() => globalThis.getSelection()?.removeAllRanges());
+        expect(await dragAcross(page, toggleRow.locator(".settings-row__title"))).toBe("");
         await settingsSearch.selectText();
         expect(
           await settingsSearch.evaluate(
@@ -214,14 +224,36 @@ suite.define(() => {
           element.scrollTop = Math.min(160, element.scrollHeight - element.clientHeight);
         });
         await captureUiProof(page, "03-settings-contextual-scrollbars.png");
+
+        const usageError = "Unknown system error -122, write";
+        await gateway.setMethodResponse("sessions.usage", {
+          __mockError: { code: "UNAVAILABLE", message: usageError },
+        });
+        await gateway.setMethodResponse("usage.cost", {
+          updatedAt: Date.now(),
+          days: 1,
+          daily: [],
+          totals: {},
+        });
+        await gateway.setMethodResponse("usage.status", {
+          updatedAt: Date.now(),
+          providers: [],
+        });
+        await page.goto(`${suite.server.baseUrl}usage`);
+        const usageErrorCallout = page.locator(".usage-callout.callout.danger");
+        await usageErrorCallout.waitFor();
+        expect(await usageErrorCallout.textContent()).toContain(usageError);
+        expect(
+          await usageErrorCallout.evaluate((element) => getComputedStyle(element).userSelect),
+        ).toBe("text");
+        await page.evaluate(() => globalThis.getSelection()?.removeAllRanges());
+        expect(await dragAcross(page, usageErrorCallout)).toContain(usageError);
+        await captureUiProof(page, "04-usage-selectable-error.png");
       },
     );
   });
 
   it("resolves the scrollbar thumb from theme tokens and captures dark/light proof", async () => {
-    if (captureUiProofEnabled) {
-      await mkdir(uiProofArtifactDir, { recursive: true });
-    }
     const thumbColorByScheme: Record<"dark" | "light", string> = { dark: "", light: "" };
     for (const colorScheme of ["dark", "light"] as const) {
       await suite.withPage(
@@ -264,22 +296,16 @@ suite.define(() => {
           await captureUiProof(page, `model-picker-${colorScheme}.png`);
           await page.keyboard.press("Escape");
 
-          // The shadow-DOM lane: a Web Awesome ::part() menu picks up the same
-          // profile through the grouped rule in base.css.
+          // Native top-layer menus keep the same scrollbar profile as the shell.
           const composer = page.locator(".agent-chat__input");
           await composer.getByRole("button", { name: "Add attachment" }).click();
-          const capabilityMenu = composer.locator("wa-dropdown.agent-chat__capability-menu");
+          const capabilityMenu = composer.locator(".agent-chat__capability-menu");
           await expect
-            .poll(() =>
-              capabilityMenu.evaluate((node) => (node as HTMLElement & { open: boolean }).open),
-            )
+            .poll(() => capabilityMenu.evaluate((node) => node.hasAttribute("open")))
             .toBe(true);
-          // Regression guard: base.css's ::-webkit-scrollbar* rules do not cross
-          // a shadow boundary on their own. Only the grouped ::part() rule gives
-          // this menu's shadow-root scrollbar the canonical width and a real
-          // thumb color instead of silently falling back to the UA default.
-          const shadowScrollbar = await capabilityMenu.evaluate((node) => {
-            const part = (node as HTMLElement).shadowRoot?.querySelector('[part~="menu"]');
+          // The top-layer menu must retain the canonical width and thumb color.
+          const menuScrollbar = await capabilityMenu.evaluate((node) => {
+            const part = node.querySelector(".oc-menu");
             if (!part) {
               return null;
             }
@@ -288,32 +314,20 @@ suite.define(() => {
               thumbBackground: getComputedStyle(part, "::-webkit-scrollbar-thumb").backgroundColor,
             };
           });
-          expect(shadowScrollbar).toEqual({ width: "12px", thumbBackground: expect.any(String) });
-          expect(shadowScrollbar?.thumbBackground).not.toBe("rgba(0, 0, 0, 0)");
-          await captureUiProof(page, `capability-menu-shadow-dom-${colorScheme}.png`);
+          expect(menuScrollbar).toEqual({ width: "12px", thumbBackground: expect.any(String) });
+          expect(menuScrollbar?.thumbBackground).not.toBe("rgba(0, 0, 0, 0)");
+          await captureUiProof(page, `capability-menu-native-${colorScheme}.png`);
 
-          // Genericity guard, not a second sample of the menu above: base.css
-          // reaches these parts through bare wa-dropdown/wa-select/wa-popover
-          // selectors, so every Web Awesome scroll part rendered on this page
-          // must report the canonical width -- including the ones no stylesheet
-          // names. A class allowlist would leave some at the platform default.
-          const shadowScrollbarWidths = await page.evaluate(() => {
-            // One part per host tag, matching the base.css rule exactly: sampling
-            // whichever part came first would read a part that rule never targets.
-            const partSelectorByTag: Record<string, string> = {
-              "WA-DROPDOWN": '[part~="menu"]',
-              "WA-POPOVER": '[part~="body"]',
-              "WA-SELECT": '[part~="listbox"]',
-            };
-            const hosts = document.querySelectorAll("wa-dropdown, wa-select, wa-popover");
-            return Array.from(hosts, (host) => {
-              const partSelector = partSelectorByTag[host.tagName];
-              const part = partSelector ? host.shadowRoot?.querySelector(partSelector) : null;
-              return part ? getComputedStyle(part, "::-webkit-scrollbar").width : null;
-            }).filter((width): width is string => width !== null);
+          // Sample every native popover, including surfaces without a named
+          // scrollbar rule, to verify the shared light-DOM profile.
+          const menuScrollbarWidths = await page.evaluate(() => {
+            return Array.from(
+              document.querySelectorAll("[popover]"),
+              (surface) => getComputedStyle(surface, "::-webkit-scrollbar").width,
+            );
           });
-          expect(shadowScrollbarWidths.length).toBeGreaterThan(1);
-          expect([...new Set(shadowScrollbarWidths)]).toEqual(["12px"]);
+          expect(menuScrollbarWidths.length).toBeGreaterThan(1);
+          expect([...new Set(menuScrollbarWidths)]).toEqual(["12px"]);
         },
       );
     }

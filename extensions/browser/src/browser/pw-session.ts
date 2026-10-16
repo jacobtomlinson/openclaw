@@ -13,14 +13,13 @@ export {
 export {
   ensureContextState,
   getPageForTargetId,
-  retirePlaywrightBrowserConnection,
+  hasCachedPlaywrightBrowserConnection,
   retirePlaywrightBrowserConnectionExact,
 } from "./pw-session-connection.js";
 export {
   armObservedDialogResponseOnPage,
   createObservedDialogAbortSignalForPage,
   ensurePageState,
-  getObservedBrowserStateForPage,
   markObservedDialogsHandledRemotelyForPage,
   respondToObservedDialogOnPage,
   restoreRoleRefsForTarget,
@@ -41,7 +40,7 @@ export {
   createPageViaPlaywright,
   focusPageByTargetIdViaPlaywright,
   forceDisconnectPlaywrightForTarget,
-  getMainFrameDocumentIdentityViaPlaywright,
+  getDocumentIdentitiesViaPlaywright,
   getObservedBrowserStateViaPlaywright,
   listPagesViaPlaywright,
   refLocator,

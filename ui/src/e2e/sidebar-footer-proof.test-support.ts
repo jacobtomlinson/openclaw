@@ -1,12 +1,13 @@
-import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import type { Locator, Page } from "playwright";
 import { expect } from "vitest";
 import type { ControlUiBuildInfo } from "../build-info.ts";
-import { installMockGateway, startControlUiE2eServer } from "../test-helpers/control-ui-e2e.ts";
+import {
+  installMockGateway,
+  startControlUiE2eServer,
+  type ControlUiMockGatewayScenario,
+} from "../test-helpers/control-ui-e2e.ts";
 import { createControlUiE2eSuite } from "./control-ui-e2e-suite.test-support.ts";
-
-const proofArtifactRoot = path.join(process.cwd(), ".artifacts", "control-ui-e2e");
 
 const SIDEBAR_PROOF_USER = {
   self: true,
@@ -29,6 +30,7 @@ export function createSidebarFooterProofSuite(name: string, buildInfo?: ControlU
 
 export async function openSidebarFooterProofPage(
   suite: ReturnType<typeof createSidebarFooterProofSuite>,
+  scenario: ControlUiMockGatewayScenario = {},
 ) {
   const context = await suite.newBrowserContext({
     locale: "en-US",
@@ -36,7 +38,10 @@ export async function openSidebarFooterProofPage(
     viewport: { height: 900, width: 1440 },
   });
   const page = await context.newPage();
-  const gateway = await installMockGateway(page, { presenceUsers: [SIDEBAR_PROOF_USER] });
+  const gateway = await installMockGateway(page, {
+    presenceUsers: [SIDEBAR_PROOF_USER],
+    ...scenario,
+  });
   await page.goto(`${suite.server.baseUrl}chat`);
   const sidebar = page.locator("openclaw-app-sidebar");
   await sidebar.locator(".sidebar-identity-card").waitFor();
@@ -49,14 +54,13 @@ export async function setSidebarProofTheme(page: Page, mode: "dark" | "light") {
     const root = document.documentElement;
     root.dataset.themeMode = nextMode;
     root.dataset.themeResolved = nextMode;
-    root.classList.toggle("wa-light", nextMode === "light");
-    root.classList.toggle("wa-dark", nextMode === "dark");
     root.style.colorScheme = nextMode;
   }, mode);
   await expect.poll(() => page.locator("html").getAttribute("data-theme-mode")).toBe(mode);
 }
 
 export async function captureUnionProof(
+  owner: { readonly artifactDir: string },
   page: Page,
   directory: string,
   fileName: string,
@@ -71,7 +75,11 @@ export async function captureUnionProof(
     await locator.evaluate(async (element) => {
       const running = element
         .getAnimations({ subtree: true })
-        .filter((animation) => animation.playState === "running");
+        .filter(
+          (animation) =>
+            animation.playState === "running" &&
+            Number.isFinite(animation.effect?.getComputedTiming().endTime),
+        );
       await Promise.all(running.map((animation) => animation.finished.catch(() => undefined)));
     });
     const box = await locator.boundingBox();
@@ -95,9 +103,9 @@ export async function captureUnionProof(
     viewport.height,
     Math.max(...boxes.map((box) => box.y + box.height)) + margin,
   );
-  const artifactDir = path.join(proofArtifactRoot, directory);
-  await mkdir(artifactDir, { recursive: true });
+  const artifactDir = path.join(owner.artifactDir, directory);
   await page.screenshot({
+    animations: "disabled",
     clip: { x, y, width: right - x, height: bottom - y },
     path: path.join(artifactDir, fileName),
   });

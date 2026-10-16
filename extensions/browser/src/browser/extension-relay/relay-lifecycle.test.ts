@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { relayTestKey } from "../../../chrome-extension/relay-key.test-support.js";
 import { resolveProfile, type ResolvedBrowserConfig } from "../config.js";
+import { refreshResolvedBrowserConfigFromDisk } from "../resolved-config-refresh.js";
 import {
   beginProfileTransition,
   getOrCreateProfileRuntime,
@@ -10,12 +11,15 @@ import {
 import type { BrowserServerState } from "../server-context.types.js";
 import type { ExtensionRelayHandle } from "./relay-server.js";
 
-const readExtensionRelayTokenMock = vi.fn();
 const ensureExtensionRelayTokenMock = vi.fn();
 vi.mock("./relay-auth.js", () => ({
-  readExtensionRelayToken: () => readExtensionRelayTokenMock(),
   ensureExtensionRelayToken: () => ensureExtensionRelayTokenMock(),
-  resolveExtensionRelayToken: () => readExtensionRelayTokenMock(),
+}));
+
+vi.mock("../config-refresh-source.js", () => ({
+  loadBrowserConfigForRuntimeRefresh: () => ({
+    browser: { profiles: { chrome: { driver: "extension", cdpPort: RELAY_PORT } } },
+  }),
 }));
 
 const startExtensionRelayServerMock = vi.fn();
@@ -62,6 +66,7 @@ function createState(token: string, existing?: ExtensionRelayHandle) {
 
 function createHandle(token: string, port = RELAY_PORT): ExtensionRelayHandle {
   return {
+    ownership: "owned",
     port,
     token,
     allowLegacyAuth: true,
@@ -82,9 +87,9 @@ function deferred() {
 describe("extension relay lifecycle", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    readExtensionRelayTokenMock.mockReturnValue(ROTATED_TOKEN);
-    ensureExtensionRelayTokenMock.mockReturnValue(ROTATED_TOKEN);
+    ensureExtensionRelayTokenMock.mockResolvedValue(ROTATED_TOKEN);
     startExtensionRelayServerMock.mockImplementation(async ({ port, token, allowLegacyAuth }) => ({
+      ownership: "owned",
       port,
       token,
       allowLegacyAuth,
@@ -92,28 +97,6 @@ describe("extension relay lifecycle", () => {
       bridge: {},
       close: vi.fn(async () => {}),
     }));
-  });
-
-  it("rebounds an existing relay when the host-local token rotates", async () => {
-    const oldRelay = createHandle(OLD_TOKEN);
-    const { profile, state } = createState(OLD_TOKEN, oldRelay);
-    expect(profile.cdpUrl).toContain(encodeURIComponent(oldRelay.internalToken));
-    expect(profile.cdpUrl).not.toContain(OLD_TOKEN);
-
-    const handle = await ensureExtensionRelayForProfile(state, profile);
-
-    expect(oldRelay.close).toHaveBeenCalledOnce();
-    expect(startExtensionRelayServerMock).toHaveBeenCalledWith({
-      port: RELAY_PORT,
-      token: ROTATED_TOKEN,
-      allowLegacyAuth: true,
-    });
-    expect(handle.token).toBe(ROTATED_TOKEN);
-    expect(state.resolved.extensionRelayToken).toBe(ROTATED_TOKEN);
-    expect(profile.cdpUrl).toContain("replacement-internal");
-    expect(profile.cdpUrl).not.toContain(ROTATED_TOKEN);
-    expect(resolveProfile(state.resolved, PROFILE_NAME)?.cdpUrl).toContain("replacement-internal");
-    expect(state.extensionRelays?.get(PROFILE_NAME)).toBe(handle);
   });
 
   it("retains and retries the exact stale relay when its first close fails", async () => {
@@ -137,6 +120,20 @@ describe("extension relay lifecycle", () => {
     );
     expect(oldRelay.close).toHaveBeenCalledTimes(2);
     expect(startExtensionRelayServerMock).toHaveBeenCalledOnce();
+  });
+
+  it("retains the adopted key when config refreshes during relay startup", async () => {
+    const { profile, state } = createState(OLD_TOKEN);
+    const replacement = createHandle(ROTATED_TOKEN);
+    startExtensionRelayServerMock.mockImplementationOnce(async () => {
+      refreshResolvedBrowserConfigFromDisk({ current: state, refreshConfigFromDisk: true });
+      return replacement;
+    });
+
+    await expect(ensureExtensionRelayForProfile(state, profile)).resolves.toBe(replacement);
+    expect(state.resolved.extensionRelayToken).toBe(ROTATED_TOKEN);
+    expect(state.extensionRelays?.get(PROFILE_NAME)).toBe(replacement);
+    expect(replacement.close).not.toHaveBeenCalled();
   });
 
   it("coalesces concurrent rebinds to one exact relay handle", async () => {
@@ -178,7 +175,6 @@ describe("extension relay lifecycle", () => {
     const first = withProfileOperationLease({
       state,
       runtime,
-      configRevision: getProfileLifecycle(runtime).configRevision,
       signal: firstController.signal,
       run: async (signal) => await ensureExtensionRelayForProfile(state, profile, signal),
     });
@@ -188,11 +184,10 @@ describe("extension relay lifecycle", () => {
     const sibling = withProfileOperationLease({
       state,
       runtime,
-      configRevision: getProfileLifecycle(runtime).configRevision,
       run: async (signal) => await ensureExtensionRelayForProfile(state, profile, signal),
     });
     void sibling.catch(() => {});
-    await expect.poll(() => readExtensionRelayTokenMock.mock.calls.length).toBe(2);
+    await expect.poll(() => ensureExtensionRelayTokenMock.mock.calls.length).toBe(2);
     firstController.abort(new Error("first browser request cancelled"));
     releaseStart.resolve();
 
@@ -223,7 +218,6 @@ describe("extension relay lifecycle", () => {
     const owner = withProfileOperationLease({
       state,
       runtime,
-      configRevision: getProfileLifecycle(runtime).configRevision,
       run: async (signal) => await ensureExtensionRelayForProfile(state, profile, signal),
     });
     void owner.catch(() => {});
@@ -233,7 +227,6 @@ describe("extension relay lifecycle", () => {
     const sibling = withProfileOperationLease({
       state,
       runtime,
-      configRevision: getProfileLifecycle(runtime).configRevision,
       signal: siblingController.signal,
       run: async (signal) => await ensureExtensionRelayForProfile(state, profile, signal),
     });
@@ -241,7 +234,7 @@ describe("extension relay lifecycle", () => {
     void sibling.catch((error: unknown) => {
       siblingError = error;
     });
-    await expect.poll(() => readExtensionRelayTokenMock.mock.calls.length).toBe(2);
+    await expect.poll(() => ensureExtensionRelayTokenMock.mock.calls.length).toBe(2);
     siblingController.abort(new Error("sibling browser request cancelled"));
     try {
       await expect
@@ -272,7 +265,6 @@ describe("extension relay lifecycle", () => {
     const pending = withProfileOperationLease({
       state,
       runtime,
-      configRevision: getProfileLifecycle(runtime).configRevision,
       run: async (signal) => await ensureExtensionRelayForProfile(state, profile, signal),
     });
     void pending.catch(() => {});

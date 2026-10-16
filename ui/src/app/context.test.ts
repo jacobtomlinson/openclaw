@@ -1,15 +1,31 @@
-import { consume } from "@lit/context";
-import { LitElement } from "lit";
 import { afterEach, describe, expect, it } from "vitest";
-import type { RouteId } from "../app-route-paths.ts";
-import { createApplicationContextProvider } from "../test-helpers/application-context.ts";
-import { applicationContext, type ApplicationContext } from "./context.ts";
+import {
+  createApplicationContextProvider,
+  requestApplicationContext,
+} from "../test-helpers/application-context.ts";
+import type { ApplicationContext } from "./context.ts";
 
 const CONSUMER_ELEMENT_NAME = "test-application-context-consumer";
 
-class TestApplicationContextConsumer extends LitElement {
-  @consume({ context: applicationContext, subscribe: true })
-  context?: ApplicationContext<RouteId>;
+class TestApplicationContextConsumer extends HTMLElement {
+  context?: ApplicationContext;
+  private unsubscribe?: () => void;
+
+  connectedCallback() {
+    requestApplicationContext(
+      this,
+      (context, unsubscribe) => {
+        this.context = context;
+        this.unsubscribe = unsubscribe;
+      },
+      true,
+    );
+  }
+
+  disconnectedCallback() {
+    this.unsubscribe?.();
+    this.unsubscribe = undefined;
+  }
 }
 
 if (!customElements.get(CONSUMER_ELEMENT_NAME)) {
@@ -21,9 +37,9 @@ afterEach(() => {
 });
 
 describe("application context consumption", () => {
-  it("rebinds a retained consumer after its provider value changes while disconnected", async () => {
-    const initialContext = { basePath: "/initial" } as ApplicationContext<RouteId>;
-    const replacementContext = { basePath: "/replacement" } as ApplicationContext<RouteId>;
+  it("rebinds a retained consumer after its provider value changes while disconnected", () => {
+    const initialContext = { basePath: "/initial" } as ApplicationContext;
+    const replacementContext = { basePath: "/replacement" } as ApplicationContext;
     const provider = createApplicationContextProvider(initialContext);
     const consumer = document.createElement(
       CONSUMER_ELEMENT_NAME,
@@ -31,13 +47,11 @@ describe("application context consumption", () => {
 
     document.body.append(provider);
     provider.append(consumer);
-    await consumer.updateComplete;
     expect(consumer.context).toBe(initialContext);
 
     consumer.remove();
     provider.setContext(replacementContext);
     provider.append(consumer);
-    await consumer.updateComplete;
 
     expect(consumer.context).toBe(replacementContext);
   });

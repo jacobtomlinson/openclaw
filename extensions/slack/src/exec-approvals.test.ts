@@ -2,6 +2,7 @@
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import { describe, expect, it } from "vitest";
 import { slackApprovalCapability } from "./approval-native.js";
+import { slackChannelConfigUiHints } from "./config-ui-hints.js";
 import {
   getSlackExecApprovalApprovers,
   isSlackExecApprovalAuthorizedSender,
@@ -60,6 +61,16 @@ describe("slack exec approvals", () => {
     ).toBe(false);
   });
 
+  it.each(["execApprovals", "execApprovals.enabled"] as const)(
+    "describes the explicit enablement and approver requirements in %s UI guidance",
+    (key) => {
+      const { help } = slackChannelConfigUiHints[key];
+      expect(help).toContain('"auto" or true');
+      expect(help).toContain("when approvers can be resolved");
+      expect(help).toContain("unset or false disables");
+    },
+  );
+
   it("prefers explicit approvers when configured", () => {
     const cfg = buildConfig(
       { approvers: ["U456"] },
@@ -108,6 +119,24 @@ describe("slack exec approvals", () => {
 
     expect(getSlackExecApprovalApprovers({ cfg })).toEqual(["U123", "U456", "U789"]);
     expect(isSlackExecApprovalAuthorizedSender({ cfg, senderId: "U456" })).toBe(true);
+  });
+
+  it("accepts typed Slack command owners as exec approvers", () => {
+    const cfg = {
+      ...buildConfig({ enabled: "auto" }),
+      commands: {
+        ownerAllowFrom: [
+          "slack:user:U0123ABCD",
+          "slack:team:T0123:user:U0999ZZZZ",
+          "telegram:user:1",
+        ],
+      },
+    } as OpenClawConfig;
+
+    expect(getSlackExecApprovalApprovers({ cfg })).toEqual(["U0123ABCD"]);
+    expect(isSlackExecApprovalClientEnabled({ cfg })).toBe(true);
+    expect(isSlackExecApprovalAuthorizedSender({ cfg, senderId: "U0123ABCD" })).toBe(true);
+    expect(isSlackExecApprovalAuthorizedSender({ cfg, senderId: "U0999ZZZZ" })).toBe(false);
   });
 
   it("defaults target to dm", () => {
@@ -170,6 +199,9 @@ describe("slack exec approvals", () => {
     expect(normalizeSlackApproverId("user:U123OWNER")).toBe("U123OWNER");
     expect(normalizeSlackApproverId("user:u123owner")).toBe("U123OWNER");
     expect(normalizeSlackApproverId("slack:u123owner")).toBe("U123OWNER");
+    expect(normalizeSlackApproverId("slack:user:u123owner")).toBe("U123OWNER");
+    expect(normalizeSlackApproverId("slack:team:T123:user:U123OWNER")).toBeUndefined();
+    expect(normalizeSlackApproverId("slack:channel:C123CHANNEL")).toBeUndefined();
     expect(normalizeSlackApproverId("<@U123OWNER>")).toBe("U123OWNER");
     expect(normalizeSlackApproverId("<@u123owner>")).toBe("U123OWNER");
     expect(normalizeSlackApproverId("u123owner")).toBe("U123OWNER");
@@ -179,7 +211,7 @@ describe("slack exec approvals", () => {
     expect(normalizeSlackApproverId("<@C123CHANNEL>")).toBeUndefined();
   });
 
-  it("applies agent and session filters to request handling", () => {
+  it("applies agent and session filters to request handling", async () => {
     const cfg = buildConfig({
       enabled: true,
       approvers: ["U123"],
@@ -188,7 +220,7 @@ describe("slack exec approvals", () => {
     });
 
     expect(
-      slackApprovalCapability.nativeRuntime?.availability.shouldHandle({
+      await slackApprovalCapability.nativeRuntimeAsync?.availability.shouldHandle({
         approvalKind: "exec",
         cfg,
         request: {
@@ -205,7 +237,7 @@ describe("slack exec approvals", () => {
     ).toBe(true);
 
     expect(
-      slackApprovalCapability.nativeRuntime?.availability.shouldHandle({
+      await slackApprovalCapability.nativeRuntimeAsync?.availability.shouldHandle({
         approvalKind: "exec",
         cfg,
         request: {
@@ -222,7 +254,7 @@ describe("slack exec approvals", () => {
     ).toBe(false);
 
     expect(
-      slackApprovalCapability.nativeRuntime?.availability.shouldHandle({
+      await slackApprovalCapability.nativeRuntimeAsync?.availability.shouldHandle({
         approvalKind: "exec",
         cfg,
         request: {
@@ -239,14 +271,14 @@ describe("slack exec approvals", () => {
     ).toBe(false);
   });
 
-  it("rejects requests bound to another channel or Slack account", () => {
+  it("rejects requests bound to another channel or Slack account", async () => {
     const cfg = buildConfig({
       enabled: true,
       approvers: ["U123"],
     });
 
     expect(
-      slackApprovalCapability.nativeRuntime?.availability.shouldHandle({
+      await slackApprovalCapability.nativeRuntimeAsync?.availability.shouldHandle({
         approvalKind: "exec",
         cfg,
         accountId: "work",
@@ -264,7 +296,7 @@ describe("slack exec approvals", () => {
     ).toBe(false);
 
     expect(
-      slackApprovalCapability.nativeRuntime?.availability.shouldHandle({
+      await slackApprovalCapability.nativeRuntimeAsync?.availability.shouldHandle({
         approvalKind: "exec",
         cfg,
         accountId: "work",
@@ -283,7 +315,7 @@ describe("slack exec approvals", () => {
     ).toBe(false);
 
     expect(
-      slackApprovalCapability.nativeRuntime?.availability.shouldHandle({
+      await slackApprovalCapability.nativeRuntimeAsync?.availability.shouldHandle({
         approvalKind: "exec",
         cfg,
         accountId: "work",
